@@ -1,0 +1,159 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Global resets / niceties */
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  font-family: theme("fontFamily.sans");
+  background: #ffffff;
+  color: #18181b;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* =============================================================================
+   Tiptap content typography
+   =============================================================================
+   Used by both <RichTextEditor> (inside .ProseMirror, the editable surface)
+   and <RichTextDisplay> (read-only). Same rules apply to both so what you
+   see while editing matches what gets shown later.
+   ========================================================================== */
+
+.tiptap-content {
+  font-size: 0.875rem; /* 14px, matching our text-sm body */
+  line-height: 1.55;
+  color: theme("colors.zinc.800");
+}
+
+.tiptap-content :first-child {
+  margin-top: 0;
+}
+
+.tiptap-content :last-child {
+  margin-bottom: 0;
+}
+
+.tiptap-content p {
+  margin: 0 0 0.5rem;
+}
+
+.tiptap-content p:empty::before {
+  content: "\00a0"; /* nbsp so empty paragraphs preserve line height */
+}
+
+.tiptap-content h2 {
+  font-size: 1rem;
+  font-weight: 600;
+  line-height: 1.3;
+  margin: 1rem 0 0.4rem;
+  color: theme("colors.zinc.900");
+}
+
+.tiptap-content h3 {
+  font-size: 0.9rem;
+  font-weight: 600;
+  line-height: 1.3;
+  margin: 0.875rem 0 0.35rem;
+  color: theme("colors.zinc.900");
+}
+
+.tiptap-content strong {
+  font-weight: 600;
+}
+
+.tiptap-content em {
+  font-style: italic;
+}
+
+.tiptap-content s {
+  text-decoration: line-through;
+}
+
+.tiptap-content code {
+  font-family: ui-monospace, "SF Mono", "Menlo", monospace;
+  font-size: 0.85em;
+  background: theme("colors.zinc.100");
+  color: theme("colors.zinc.800");
+  padding: 0.1em 0.3em;
+  border-radius: 3px;
+}
+
+.tiptap-content pre {
+  font-family: ui-monospace, "SF Mono", "Menlo", monospace;
+  font-size: 0.85em;
+  background: theme("colors.zinc.100");
+  color: theme("colors.zinc.800");
+  padding: 0.65rem 0.85rem;
+  border-radius: 6px;
+  margin: 0.5rem 0;
+  overflow-x: auto;
+}
+
+.tiptap-content pre code {
+  background: transparent;
+  padding: 0;
+  border-radius: 0;
+}
+
+.tiptap-content ul,
+.tiptap-content ol {
+  margin: 0.4rem 0 0.5rem;
+  padding-left: 1.4rem;
+}
+
+.tiptap-content ul {
+  list-style: disc;
+}
+
+.tiptap-content ol {
+  list-style: decimal;
+}
+
+.tiptap-content li {
+  margin: 0.15rem 0;
+}
+
+.tiptap-content li > p {
+  margin: 0;
+}
+
+.tiptap-content blockquote {
+  border-left: 3px solid theme("colors.zinc.200");
+  padding-left: 0.85rem;
+  margin: 0.5rem 0;
+  color: theme("colors.zinc.600");
+  font-style: italic;
+}
+
+.tiptap-content a {
+  color: theme("colors.maroon.700");
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.tiptap-content a:hover {
+  color: theme("colors.maroon.800");
+}
+
+/* Tiptap empty-state placeholder — only visible when the editor is empty */
+.tiptap-content p.is-editor-empty:first-child::before {
+  content: attr(data-placeholder);
+  float: left;
+  color: theme("colors.zinc.400");
+  pointer-events: none;
+  height: 0;
+}
+
+/* Editor surface itself (when used inside RichTextEditor): the .ProseMirror
+   element gets focus styling from the parent already, so we just remove its
+   default outline. */
+.tiptap-content.ProseMirror,
+.tiptap-content .ProseMirror {
+  outline: none;
+}
