@@ -52,14 +52,59 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }
 
   useEffect(() => {
-    // Fetch the initial session on app boot
-    supabase.auth.getSession().then(async ({ data }) => {
-      setSession(data.session);
-      if (data.session?.user) {
-        setContact(await loadContact(data.session.user.id));
+    // Fetch the initial session on app boot.
+    //
+    // Stale-cache recovery: if the cached Supabase session in localStorage
+    // refers to credentials the server can't validate (which can happen
+    // after migrations, RLS changes, or anon key rotations), getSession()
+    // can hang forever and the app stays stuck on "Loading…". To recover
+    // automatically, we race the call against a 5-second timeout. If the
+    // timeout wins, we nuke the cached session and reload, which forces a
+    // fresh auth flow from a clean state.
+    let cancelled = false;
+    let timeoutId: ReturnType<typeof setTimeout> | null = null;
+
+    const recoverFromStaleSession = () => {
+      console.warn(
+        "Auth getSession timed out — clearing stale Supabase localStorage and reloading.",
+      );
+      try {
+        for (const key of Object.keys(localStorage)) {
+          if (key.startsWith("sb-")) {
+            localStorage.removeItem(key);
+          }
+        }
+      } catch {
+        // localStorage might be disabled (private browsing, etc.) — fall through
       }
-      setLoading(false);
-    });
+      window.location.reload();
+    };
+
+    timeoutId = setTimeout(() => {
+      if (cancelled) return;
+      recoverFromStaleSession();
+    }, 5000);
+
+    supabase.auth
+      .getSession()
+      .then(async ({ data }) => {
+        if (cancelled) return;
+        if (timeoutId) clearTimeout(timeoutId);
+        setSession(data.session);
+        if (data.session?.user) {
+          setContact(await loadContact(data.session.user.id));
+        }
+        setLoading(false);
+      })
+      .catch((err) => {
+        if (cancelled) return;
+        if (timeoutId) clearTimeout(timeoutId);
+        console.error("Auth getSession failed:", err);
+        // On error (as opposed to hang), fall back to "no session" rather
+        // than reloading. The user can then sign in fresh.
+        setSession(null);
+        setLoading(false);
+      });
 
     // Subscribe to auth changes (login, logout, token refresh, etc.)
     const {
@@ -73,7 +118,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       }
     });
 
-    return () => subscription.unsubscribe();
+    return () => {
+      cancelled = true;
+      if (timeoutId) clearTimeout(timeoutId);
+      subscription.unsubscribe();
+    };
   }, []);
 
   const signOut = async () => {
