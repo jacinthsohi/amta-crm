@@ -184,7 +184,7 @@ export function ProgramForm({
         <TextInput
           value={form.name}
           onChange={(v) => set("name", v)}
-          placeholder="Yale University"
+          placeholder="Midlands State University"
           error={errors.name}
           autoFocus
         />
@@ -199,7 +199,7 @@ export function ProgramForm({
         <TextInput
           value={form.short_name}
           onChange={(v) => set("short_name", v)}
-          placeholder="Yale"
+          placeholder="Midlands State"
           error={errors.short_name}
         />
       </FieldGroup>
@@ -225,7 +225,7 @@ export function ProgramForm({
         <TextInput
           value={form.website}
           onChange={(v) => set("website", v)}
-          placeholder="yale.edu"
+          placeholder="midlandsstate.edu"
         />
       </FieldGroup>
 

@@ -123,7 +123,7 @@ export function EventDocumentForm({
         <TextInput
           value={form.title}
           onChange={(v) => set("title", v)}
-          placeholder="2026 Yale Invitational Welcome Packet"
+          placeholder="2026 Midlands State Invitational Welcome Packet"
           error={errors.title}
         />
       </FieldGroup>

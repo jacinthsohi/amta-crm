@@ -215,7 +215,7 @@ export function EventForm({
         <TextInput
           value={form.name}
           onChange={(v) => set("name", v)}
-          placeholder="Yale Invitational"
+          placeholder="Midlands State Invitational"
           error={errors.name}
           autoFocus
         />
