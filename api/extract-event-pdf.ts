@@ -85,9 +85,7 @@ You must return a JSON object with EXACTLY this shape:
   "location_venue": string | null,    // specific building/courthouse name if mentioned
   "host_program_name": string | null, // school/university name
   "description": string | null,       // 2-3 sentence summary of what this tournament is
-  "registration_deadline": string | null, // YYYY-MM-DD
   "max_teams": number | null,
-  "fee_per_team": number | null,      // in USD, just the number
   "tournament_director": string | null, // name only, no title
   "confidence": {
     "name": "high" | "medium" | "low",
@@ -98,9 +96,7 @@ You must return a JSON object with EXACTLY this shape:
     "location_venue": "high" | "medium" | "low",
     "host_program_name": "high" | "medium" | "low",
     "description": "high" | "medium" | "low",
-    "registration_deadline": "high" | "medium" | "low",
     "max_teams": "high" | "medium" | "low",
-    "fee_per_team": "high" | "medium" | "low",
     "tournament_director": "high" | "medium" | "low"
   },
   "extraction_notes": string  // brief explanation of anything unusual or unclear
@@ -122,8 +118,6 @@ RULES:
 - Dates: many tournaments span Friday-Sunday. Extract both start and end. \
   If only one date is given, use it for both.
 - max_teams: look for phrases like "limited to 24 teams" or "capacity of 32 teams".
-- fee_per_team: extract the registration fee. If multiple tiers \
-  (early bird etc.), use the standard/full price.
 
 OUTPUT: Return ONLY the JSON object. No preamble, no markdown code fences, \
 no explanation outside the JSON. The response should be parseable directly \

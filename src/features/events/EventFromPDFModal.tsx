@@ -42,9 +42,7 @@ type ExtractedData = {
   location_venue: string | null;
   host_program_name: string | null;
   description: string | null;
-  registration_deadline: string | null;
   max_teams: number | null;
-  fee_per_team: number | null;
   tournament_director: string | null;
   confidence: Record<string, ConfidenceLevel>;
   extraction_notes: string;
@@ -410,47 +408,16 @@ function ReviewStage({
             />
           </Field>
 
-          <div className="grid grid-cols-3 gap-3">
-            <Field
-              label="Reg. deadline"
-              confidence={data.confidence?.registration_deadline}
-            >
-              <input
-                type="date"
-                value={data.registration_deadline ?? ""}
-                onChange={(e) =>
-                  update("registration_deadline", e.target.value || null)
-                }
-                className="w-full px-3 py-2 text-sm border border-zinc-300 rounded-md focus:border-maroon-500 focus:outline-none"
-              />
-            </Field>
-            <Field label="Max teams" confidence={data.confidence?.max_teams}>
-              <input
-                type="number"
-                value={data.max_teams ?? ""}
-                onChange={(e) =>
-                  update("max_teams", e.target.value ? Number(e.target.value) : null)
-                }
-                className="w-full px-3 py-2 text-sm border border-zinc-300 rounded-md focus:border-maroon-500 focus:outline-none"
-              />
-            </Field>
-            <Field
-              label="Fee per team ($)"
-              confidence={data.confidence?.fee_per_team}
-            >
-              <input
-                type="number"
-                value={data.fee_per_team ?? ""}
-                onChange={(e) =>
-                  update(
-                    "fee_per_team",
-                    e.target.value ? Number(e.target.value) : null,
-                  )
-                }
-                className="w-full px-3 py-2 text-sm border border-zinc-300 rounded-md focus:border-maroon-500 focus:outline-none"
-              />
-            </Field>
-          </div>
+          <Field label="Max teams" confidence={data.confidence?.max_teams}>
+            <input
+              type="number"
+              value={data.max_teams ?? ""}
+              onChange={(e) =>
+                update("max_teams", e.target.value ? Number(e.target.value) : null)
+              }
+              className="w-full px-3 py-2 text-sm border border-zinc-300 rounded-md focus:border-maroon-500 focus:outline-none"
+            />
+          </Field>
 
           <Field
             label="Tournament Director"
@@ -625,7 +592,17 @@ async function createEventFromExtraction(
   else if (/regional/i.test(lowerName)) tournamentType = "regional";
   else if (/invitational/i.test(lowerName)) tournamentType = "invitational";
 
-  // 4. Insert event row. The events table has separate location_city /
+  // 4. Determine status from dates: completed if end_date is past,
+  // in_progress if we're between start and end, upcoming otherwise.
+  const today = new Date().toISOString().slice(0, 10); // YYYY-MM-DD
+  let status: "upcoming" | "in_progress" | "completed" = "upcoming";
+  if (data.end_date && data.end_date < today) {
+    status = "completed";
+  } else if (data.start_date && data.start_date <= today) {
+    status = "in_progress";
+  }
+
+  // 5. Insert event row. The events table has separate location_city /
   // location_state columns (no combined `location` field), and status is
   // an enum: upcoming | in_progress | completed | cancelled.
   const { data: insertedEvent, error: eventErr } = await supabase
@@ -639,7 +616,7 @@ async function createEventFromExtraction(
       description: data.description,
       event_type: "tournament",
       tournament_type: tournamentType,
-      status: "upcoming",
+      status,
     })
     .select()
     .single();
