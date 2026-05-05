@@ -195,9 +195,26 @@ async function executeSearchContacts(
     .limit(50);
 
   if (args.name_query) {
-    // Case-insensitive partial match on first or last name
+    // Match the query against first name, last name, OR the concatenated
+    // full name "first last". Split the query into tokens so "Justin
+    // Bernstein" matches a row where first=Justin and last=Bernstein.
     const q = args.name_query.trim();
-    query = query.or(`first_name.ilike.%${q}%,last_name.ilike.%${q}%`);
+    const tokens = q.split(/\s+/).filter(Boolean);
+
+    if (tokens.length === 1) {
+      // Single token: match if it appears in either name
+      query = query.or(
+        `first_name.ilike.%${tokens[0]}%,last_name.ilike.%${tokens[0]}%`,
+      );
+    } else {
+      // Multi-token: match if FIRST token is in first_name AND LAST token
+      // is in last_name. Handles "Justin Bernstein", "John Smith Jr." etc.
+      const first = tokens[0];
+      const last = tokens[tokens.length - 1];
+      query = query
+        .ilike("first_name", `%${first}%`)
+        .ilike("last_name", `%${last}%`);
+    }
   }
 
   const { data: contacts, error } = await query;
@@ -481,6 +498,10 @@ When answering:
 - Use multiple tool calls if needed. For broad questions ("who handles X?"), \
   first identify relevant committees with search_committees, then look up \
   their members.
+- IMPORTANT: If a search returns 0 results, try variations before giving up. \
+  For names, try just the first name or just the last name. For topics, try \
+  related keywords. Only conclude something doesn't exist after 2-3 reasonable \
+  search variations.
 - Be concise. Lead with the answer, then explain reasoning briefly.
 - You may use light markdown (**bold** for names/titles, bullet lists, line \
   breaks for readability). The frontend renders markdown.
