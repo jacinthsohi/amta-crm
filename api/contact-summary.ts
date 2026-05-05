@@ -181,11 +181,11 @@ export default async function handler(request: Request): Promise<Response> {
             controller.enqueue(encoder.encode(chunk));
           }
         }
-        controller.close();
 
-        // After streaming completes, save the result to the database.
-        // We do this AFTER closing the stream so the user sees the full text
-        // immediately; the DB write happens in background.
+        // Save BEFORE closing the stream so that any client-side invalidation
+        // triggered immediately after the stream ends finds the saved summary
+        // in the database. If we closed first, the client's refetch could
+        // race against this UPDATE and get back stale data.
         if (fullText.trim()) {
           await serviceClient
             .from("contacts")
@@ -195,6 +195,8 @@ export default async function handler(request: Request): Promise<Response> {
             })
             .eq("id", contactId);
         }
+
+        controller.close();
       } catch (err) {
         controller.error(err);
       }
