@@ -53,7 +53,7 @@ export function AISummary({ contactId, cachedSummary, cachedGeneratedAt }: Props
         throw new Error("Not signed in. Please refresh the page.");
       }
 
-      const res = await fetch("/api/contact-summary", {
+      const res = await fetch(`/api/contact-summary?t=${Date.now()}`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
