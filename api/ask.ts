@@ -640,21 +640,22 @@ function extractContactIds(text: string): {
   cleanText: string;
   contactIds: string[];
 } {
-  // Match the CONTACT_IDS line. Claude sometimes uses brackets, sometimes
-  // doesn't — accept both. Match through end of line OR end of string.
-  const match = text.match(/CONTACT_IDS:\s*\[?([^\]\n]*)\]?/);
+  // Find the CONTACT_IDS marker. Match everything from the marker to either
+  // a blank line or end of string — UUIDs can span multiple lines.
+  const match = text.match(/CONTACT_IDS:\s*([\s\S]*?)(?:\n\s*\n|$)/);
   if (!match) return { cleanText: text, contactIds: [] };
 
-  const ids = match[1]
-    .split(",")
-    .map((s) => s.trim())
-    .filter((s) => /^[0-9a-f-]{36}$/i.test(s));
+  // Extract all UUIDs anywhere in the matched section, regardless of
+  // brackets, line breaks, or other formatting.
+  const uuidPattern = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi;
+  const ids = match[1].match(uuidPattern) ?? [];
 
-  // Strip the entire CONTACT_IDS line from the displayed text. Use a
-  // multiline-friendly regex that nukes the whole line.
+  // Strip the entire CONTACT_IDS section (marker + all UUIDs/whitespace
+  // until blank line or EOF) from the displayed text.
   const cleanText = text
-    .replace(/\s*CONTACT_IDS:\s*\[?[^\]\n]*\]?\s*$/m, "")
+    .replace(/\s*CONTACT_IDS:\s*[\s\S]*?(?=\n\s*\n|$)/, "")
     .trim();
+
   return { cleanText, contactIds: ids };
 }
 

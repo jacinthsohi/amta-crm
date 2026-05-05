@@ -404,12 +404,21 @@ function MessageBubble({ message }: { message: AIMessage }) {
       {message.tool_calls.length > 0 && (
         <ToolCallsTrace calls={message.tool_calls} />
       )}
-      <SimpleMarkdown text={message.display_text ?? ""} />
+      <SimpleMarkdown text={stripContactIdsLine(message.display_text ?? "")} />
       {message.referenced_contact_ids.length > 0 && (
         <ContactCardsRow contactIds={message.referenced_contact_ids} />
       )}
     </div>
   );
+}
+
+/**
+ * Display-side safety net: strip any CONTACT_IDS section that snuck through
+ * the server-side parsing. Belt-and-suspenders approach so users never see
+ * raw machine output.
+ */
+function stripContactIdsLine(text: string): string {
+  return text.replace(/\s*CONTACT_IDS:\s*[\s\S]*?(?=\n\s*\n|$)/i, "").trim();
 }
 
 /**
@@ -425,14 +434,26 @@ function SimpleMarkdown({ text }: { text: string }) {
     <div className="text-sm text-zinc-800 leading-relaxed space-y-3">
       {blocks.map((block, i) => {
         const lines = block.split("\n");
-        const isList = lines.every((l) => /^\s*[-*]\s/.test(l));
 
-        if (isList) {
+        // A block is a list if any line starts with "- " or "* ".
+        // Continuation lines (no bullet) are folded into the preceding item.
+        const hasBullets = lines.some((l) => /^\s*[-*]\s/.test(l));
+
+        if (hasBullets) {
+          const items: string[] = [];
+          for (const line of lines) {
+            if (/^\s*[-*]\s/.test(line)) {
+              items.push(line.replace(/^\s*[-*]\s/, ""));
+            } else if (items.length > 0) {
+              // Continuation of previous bullet
+              items[items.length - 1] += " " + line.trim();
+            }
+          }
           return (
             <ul key={i} className="list-disc pl-5 space-y-1">
-              {lines.map((line, j) => (
+              {items.map((item, j) => (
                 <li key={j}>
-                  <InlineMarkdown text={line.replace(/^\s*[-*]\s/, "")} />
+                  <InlineMarkdown text={item} />
                 </li>
               ))}
             </ul>
