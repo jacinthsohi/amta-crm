@@ -112,10 +112,17 @@ export default async function handler(request: Request): Promise<Response> {
   // Use the service-role client for data fetching to bypass RLS. The user
   // is already authenticated; we just need to read data that they may not
   // have direct RLS permission for (e.g. all committees).
+  console.log("[contact-summary] Fetching contact:", contactId);
   const contactData = await fetchContactData(serviceClient, contactId);
   if (!contactData) {
+    console.log("[contact-summary] fetchContactData returned null");
     return jsonError(404, "Contact not found.");
   }
+  console.log(
+    "[contact-summary] Contact fetched:",
+    contactData.contact.first_name,
+    contactData.contact.last_name,
+  );
 
   // ---- 5. Build the user message and call Claude with streaming ------------
   const userMessage = formatContactDataForPrompt(contactData);
@@ -246,9 +253,10 @@ async function fetchContactData(
     interactionsRes,
   ] = await Promise.all([
     supabase
-      .from("active_contacts")
+      .from("contacts")
       .select("first_name, last_name")
       .eq("id", contactId)
+      .is("deleted_at", null)
       .maybeSingle(),
     supabase
       .from("active_officer_terms")
@@ -281,6 +289,16 @@ async function fetchContactData(
     supabase.from("active_interactions").select("id, type"),
   ]);
 
+  if (contactRes.error) {
+    console.log(
+      "[contact-summary] Contact query error:",
+      JSON.stringify(contactRes.error),
+    );
+  }
+  console.log(
+    "[contact-summary] Contact query data:",
+    contactRes.data ? "found" : "null",
+  );
   if (!contactRes.data) return null;
 
   // Resolve committees by joining locally (simpler than a SQL join)
