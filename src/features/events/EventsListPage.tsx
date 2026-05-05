@@ -1,11 +1,12 @@
 import { useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { Plus, Search, ChevronRight, Calendar, MapPin } from "lucide-react";
+import { Plus, Search, ChevronRight, Calendar, MapPin, Sparkles } from "lucide-react";
 import { useEvents } from "./hooks";
 import { Tag } from "@/components/Tag";
 import { LoadingState, ErrorState, EmptyState } from "@/components/states";
 import { PrimaryButton } from "@/components/Buttons";
 import { EventForm } from "./EventForm";
+import { EventFromPDFModal } from "./EventFromPDFModal";
 import { formatDate } from "@/lib/format";
 import type { Event } from "@/lib/database.types";
 
@@ -50,6 +51,7 @@ export default function EventsListPage() {
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
   const [query, setQuery] = useState("");
   const [formOpen, setFormOpen] = useState(false);
+  const [pdfOpen, setPdfOpen] = useState(false);
 
   const filtered = useMemo(() => {
     if (!events) return [];
@@ -81,12 +83,21 @@ export default function EventsListPage() {
               Tournaments, board meetings, and other AMTA gatherings.
             </p>
           </div>
-          <PrimaryButton onClick={() => setFormOpen(true)}>
-            <span className="inline-flex items-center gap-1.5">
-              <Plus size={14} />
-              New event
-            </span>
-          </PrimaryButton>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setPdfOpen(true)}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-maroon-700 bg-white border border-maroon-200 rounded-md hover:bg-maroon-50 transition-colors"
+            >
+              <Sparkles size={14} />
+              Create from PDF
+            </button>
+            <PrimaryButton onClick={() => setFormOpen(true)}>
+              <span className="inline-flex items-center gap-1.5">
+                <Plus size={14} />
+                New event
+              </span>
+            </PrimaryButton>
+          </div>
         </div>
 
         <div className="flex items-center gap-3 flex-wrap">
@@ -236,6 +247,7 @@ export default function EventsListPage() {
       </div>
 
       <EventForm open={formOpen} onClose={() => setFormOpen(false)} />
+      <EventFromPDFModal open={pdfOpen} onClose={() => setPdfOpen(false)} />
     </div>
   );
 }
