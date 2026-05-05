@@ -626,12 +626,20 @@ async function createEventFromExtraction(
   }
   const eventId = insertedEvent.id as string;
 
-  // 4. Create event host link if program matched
+  // 6. Create event host link if program matched. event_hosts requires
+  // a host_role; for tournaments imported from a packet, "host" is the
+  // appropriate default (other roles like "co-host" can be set manually).
   if (hostProgramId) {
-    await supabase.from("event_hosts").insert({
+    const { error: hostErr } = await supabase.from("event_hosts").insert({
       event_id: eventId,
       program_id: hostProgramId,
+      host_role: "host",
     });
+    if (hostErr) {
+      // Don't throw — event is created and PDF is uploaded; the host link
+      // is a nice-to-have. Surface the issue but let the user proceed.
+      console.warn("Failed to create event_hosts link:", hostErr.message);
+    }
   }
 
   // 5. Upload PDF to storage
