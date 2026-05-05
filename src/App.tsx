@@ -28,6 +28,7 @@ import EventDetailPage from "@/features/events/EventDetailPage";
 import ProjectsListPage from "@/features/projects/ProjectsListPage";
 import ProjectDetailPage from "@/features/projects/ProjectDetailPage";
 import TasksListPage from "@/features/tasks/TasksListPage";
+import AskPage from "@/features/ask/AskPage";
 import InteractionsListPage from "@/features/interactions/InteractionsListPage";
 import InteractionDetailPage from "@/features/interactions/InteractionDetailPage";
 
@@ -106,6 +107,7 @@ export default function App() {
                 element={<InteractionDetailPage />}
               />
               <Route path="tasks" element={<TasksListPage />} />
+              <Route path="ask" element={<AskPage />} />
               <Route path="admin/invitations" element={<InvitationsPage />} />
             </Route>
           </Routes>

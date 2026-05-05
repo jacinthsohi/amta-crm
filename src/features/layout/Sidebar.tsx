@@ -9,6 +9,7 @@ import {
   MessageSquare,
   CheckSquare,
   Search,
+  Sparkles,
   LogOut,
 } from "lucide-react";
 import { useAuth } from "@/lib/auth";
@@ -17,6 +18,7 @@ import { initialsOf } from "@/lib/format";
 
 const NAV_ITEMS = [
   { to: "/", label: "Home", icon: Home, exact: true },
+  { to: "/ask", label: "Ask AI", icon: Sparkles },
   { to: "/contacts", label: "Contacts", icon: Users },
   { to: "/programs", label: "Programs", icon: GraduationCap },
   { to: "/committees", label: "Committees", icon: Briefcase },
