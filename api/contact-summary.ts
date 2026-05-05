@@ -113,10 +113,33 @@ export default async function handler(request: Request): Promise<Response> {
   // is already authenticated; we just need to read data that they may not
   // have direct RLS permission for (e.g. all committees).
   console.log("[contact-summary] Fetching contact:", contactId);
+
+  // Inline diagnostic: query the contacts table directly and return what we see.
+  const { data: rawContact, error: rawErr } = await serviceClient
+    .from("contacts")
+    .select("id, first_name, last_name, deleted_at")
+    .eq("id", contactId)
+    .maybeSingle();
+
+  if (rawErr) {
+    return jsonError(
+      500,
+      `Database error querying contact: ${JSON.stringify(rawErr)}`,
+    );
+  }
+  if (!rawContact) {
+    return jsonError(
+      404,
+      `Contact not found. Searched for id=${contactId}. Direct query returned null with no error.`,
+    );
+  }
+
   const contactData = await fetchContactData(serviceClient, contactId);
   if (!contactData) {
-    console.log("[contact-summary] fetchContactData returned null");
-    return jsonError(404, "Contact not found.");
+    return jsonError(
+      404,
+      `Direct query found contact "${rawContact.first_name} ${rawContact.last_name}" (deleted_at=${rawContact.deleted_at}), but fetchContactData returned null. fetchContactData has additional logic that may have failed.`,
+    );
   }
   console.log(
     "[contact-summary] Contact fetched:",
