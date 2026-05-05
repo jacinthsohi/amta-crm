@@ -40,6 +40,8 @@ export type Contact = Timestamps & {
   notes: string | null;
   standing: "active" | "inactive" | null;
   has_board_history: boolean;
+  ai_summary: string | null;
+  ai_summary_generated_at: string | null;
 };
 
 export type ContactCategory = Timestamps & {

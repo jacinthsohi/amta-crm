@@ -40,6 +40,7 @@ import { ProgramAffiliationForm } from "./ProgramAffiliationForm";
 import { TaskForm } from "@/features/tasks/TaskForm";
 import { InteractionForm } from "@/features/interactions/InteractionForm";
 import type { Task } from "@/lib/database.types";
+import { AISummary } from "./AISummary";
 
 function isCurrentBoard(c: { category_names: string[] }): boolean {
   return c.category_names.includes("Current Board Member");
@@ -94,6 +95,15 @@ export default function ContactDetailPage() {
 
       <div className="flex-1 overflow-y-auto">
         <Hero contact={contact} onEdit={() => setEditOpen(true)} />
+
+        {/* AI summary — generated on demand, cached on the contact row */}
+        <div className="px-8 pt-1 pb-3">
+          <AISummary
+            contactId={contact.id}
+            cachedSummary={contact.ai_summary}
+            cachedGeneratedAt={contact.ai_summary_generated_at}
+          />
+        </div>
 
         <div
           className="px-8 py-7 grid gap-10"
