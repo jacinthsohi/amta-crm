@@ -12,14 +12,18 @@ import { createClient } from "@supabase/supabase-js";
  * ("Bearer <token>"). Otherwise responds 401.
  *
  * Env vars required:
- *   ANTHROPIC_API_KEY      — Anthropic API key (server-only, no VITE_ prefix)
- *   VITE_SUPABASE_URL      — production Supabase URL
- *   SUPABASE_SERVICE_ROLE_KEY — Supabase service role key (NOT the anon key)
+ *   ANTHROPIC_API_KEY              — Anthropic API key (server-only)
+ *   VITE_SUPABASE_URL              — Supabase project URL
+ *   VITE_SUPABASE_ANON_KEY         — Supabase anon key (used for JWT verification)
+ *   SUPABASE_SERVICE_ROLE_KEY      — Supabase service role key (used for
+ *                                     RLS-bypassing data fetches)
  *
- * Why service role: the function fetches all the contact's relational data
- * (committees, officer terms, board terms, categories, interactions). Using
- * the service role lets us bypass RLS for these reads. Don't worry — the
- * caller is JWT-verified before any reads happen.
+ * We use TWO Supabase clients here:
+ *   1. An anon-key client to verify the user's JWT via auth.getUser(token)
+ *   2. A service-role client to fetch the contact's relational data without
+ *      RLS getting in the way
+ * Mixing these is necessary because the service-role client bypasses auth
+ * entirely and behaves oddly when asked to verify user tokens.
  */
 
 export const config = {
@@ -41,18 +45,22 @@ function getAnthropic() {
   return anthropic;
 }
 
-function getSupabase(authHeader: string) {
+function getAnonClient() {
+  const supabaseUrl = process.env.VITE_SUPABASE_URL;
+  const anonKey = process.env.VITE_SUPABASE_ANON_KEY;
+  if (!supabaseUrl || !anonKey) {
+    throw new Error("VITE_SUPABASE_URL or VITE_SUPABASE_ANON_KEY is not set");
+  }
+  return createClient(supabaseUrl, anonKey);
+}
+
+function getServiceClient() {
   const supabaseUrl = process.env.VITE_SUPABASE_URL;
   const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
   if (!supabaseUrl || !serviceRoleKey) {
-    throw new Error("Supabase env vars are not set");
+    throw new Error("VITE_SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY is not set");
   }
-  // Pass through the user's JWT so RLS can still apply if we ever wanted it
-  // to. For now we use the service role for reads but auth-check the user
-  // via the JWT before doing anything.
-  return createClient(supabaseUrl, serviceRoleKey, {
-    global: { headers: { Authorization: authHeader } },
-  });
+  return createClient(supabaseUrl, serviceRoleKey);
 }
 
 // -----------------------------------------------------------------------------
@@ -83,21 +91,28 @@ export default async function handler(request: Request): Promise<Response> {
   }
 
   // ---- 3. Verify the JWT identifies a real user ----------------------------
-  let supabase;
+  // Use an anon-key client for JWT verification. Service-role clients bypass
+  // auth and behave oddly when asked to verify tokens.
+  let anonClient;
+  let serviceClient;
   try {
-    supabase = getSupabase(authHeader);
+    anonClient = getAnonClient();
+    serviceClient = getServiceClient();
   } catch (e) {
     return jsonError(500, "Server misconfigured: " + (e as Error).message);
   }
 
   const token = authHeader.slice("Bearer ".length);
-  const { data: userData, error: userErr } = await supabase.auth.getUser(token);
+  const { data: userData, error: userErr } = await anonClient.auth.getUser(token);
   if (userErr || !userData?.user) {
     return jsonError(401, "Invalid or expired session.");
   }
 
   // ---- 4. Fetch the contact and all its related data -----------------------
-  const contactData = await fetchContactData(supabase, contactId);
+  // Use the service-role client for data fetching to bypass RLS. The user
+  // is already authenticated; we just need to read data that they may not
+  // have direct RLS permission for (e.g. all committees).
+  const contactData = await fetchContactData(serviceClient, contactId);
   if (!contactData) {
     return jsonError(404, "Contact not found.");
   }
@@ -142,7 +157,7 @@ export default async function handler(request: Request): Promise<Response> {
         // We do this AFTER closing the stream so the user sees the full text
         // immediately; the DB write happens in background.
         if (fullText.trim()) {
-          await supabase
+          await serviceClient
             .from("contacts")
             .update({
               ai_summary: fullText,
@@ -214,7 +229,7 @@ type ContactDataBundle = {
 };
 
 async function fetchContactData(
-  supabase: ReturnType<typeof getSupabase>,
+  supabase: ReturnType<typeof getServiceClient>,
   contactId: string,
 ): Promise<ContactDataBundle | null> {
   // Use Promise.all to parallelize all the queries
