@@ -615,25 +615,31 @@ async function createEventFromExtraction(
     hostProgramId = exact?.id ?? (programs?.[0] as any)?.id ?? null;
   }
 
-  // 2. Build location string from city/state/venue
-  const locationParts = [
-    data.location_venue,
-    data.location_city,
-    data.location_state,
-  ].filter(Boolean);
-  const location = locationParts.length > 0 ? locationParts.join(", ") : null;
+  // 3. Detect tournament_type from the event name (heuristic; OK if null)
+  const lowerName = (data.name ?? "").toLowerCase();
+  let tournamentType: string | null = null;
+  if (/\bnct\b|national championship/i.test(lowerName))
+    tournamentType = "nct";
+  else if (/\borcs\b|opening round/i.test(lowerName))
+    tournamentType = "orcs";
+  else if (/regional/i.test(lowerName)) tournamentType = "regional";
+  else if (/invitational/i.test(lowerName)) tournamentType = "invitational";
 
-  // 3. Insert event row
+  // 4. Insert event row. The events table has separate location_city /
+  // location_state columns (no combined `location` field), and status is
+  // an enum: upcoming | in_progress | completed | cancelled.
   const { data: insertedEvent, error: eventErr } = await supabase
     .from("events")
     .insert({
       name: data.name,
       start_date: data.start_date,
       end_date: data.end_date,
-      location,
+      location_city: data.location_city,
+      location_state: data.location_state,
       description: data.description,
       event_type: "tournament",
-      status: "planned",
+      tournament_type: tournamentType,
+      status: "upcoming",
     })
     .select()
     .single();
