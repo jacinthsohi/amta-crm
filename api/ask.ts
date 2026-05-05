@@ -481,9 +481,9 @@ When answering:
 - Use multiple tool calls if needed. For broad questions ("who handles X?"), \
   first identify relevant committees with search_committees, then look up \
   their members.
-- For each person you mention by name, you can include their contact ID in \
-  a structured way at the end of your response (we'll format that for the user).
 - Be concise. Lead with the answer, then explain reasoning briefly.
+- You may use light markdown (**bold** for names/titles, bullet lists, line \
+  breaks for readability). The frontend renders markdown.
 - If the data doesn't support a clear answer, say so honestly. Don't \
   speculate beyond what tools return.
 - Avoid surfacing PII (phone numbers, personal emails) unless directly \
@@ -492,12 +492,15 @@ When answering:
 Tone: helpful, knowledgeable, board-meeting professional. You're like a \
 sharp staff member who knows everyone in the organization.
 
-Output format: After answering in prose, include a single line at the very \
-end of your response with the format:
-CONTACT_IDS: [comma-separated UUIDs of contacts mentioned, in relevance order]
+OUTPUT FORMAT:
+After your answer, append exactly one final line in this format:
 
-This line will be parsed and stripped from the displayed answer. Include \
-only contacts you actually referenced. Up to 8.`;
+CONTACT_IDS: uuid1, uuid2, uuid3
+
+List up to 8 contact IDs you actually referenced, in relevance order. \
+Use plain comma-separated UUIDs (no brackets, no quotes). This line is \
+parsed by the UI to render clickable contact cards and will be hidden \
+from the user. If you didn't reference any contacts, write: CONTACT_IDS: none`;
 
 // -----------------------------------------------------------------------------
 // Agentic loop — the heart of the tool-use pattern
@@ -637,7 +640,9 @@ function extractContactIds(text: string): {
   cleanText: string;
   contactIds: string[];
 } {
-  const match = text.match(/CONTACT_IDS:\s*\[([^\]]*)\]/);
+  // Match the CONTACT_IDS line. Claude sometimes uses brackets, sometimes
+  // doesn't — accept both. Match through end of line OR end of string.
+  const match = text.match(/CONTACT_IDS:\s*\[?([^\]\n]*)\]?/);
   if (!match) return { cleanText: text, contactIds: [] };
 
   const ids = match[1]
@@ -645,7 +650,11 @@ function extractContactIds(text: string): {
     .map((s) => s.trim())
     .filter((s) => /^[0-9a-f-]{36}$/i.test(s));
 
-  const cleanText = text.replace(/CONTACT_IDS:\s*\[[^\]]*\]/, "").trim();
+  // Strip the entire CONTACT_IDS line from the displayed text. Use a
+  // multiline-friendly regex that nukes the whole line.
+  const cleanText = text
+    .replace(/\s*CONTACT_IDS:\s*\[?[^\]\n]*\]?\s*$/m, "")
+    .trim();
   return { cleanText, contactIds: ids };
 }
 

@@ -404,13 +404,76 @@ function MessageBubble({ message }: { message: AIMessage }) {
       {message.tool_calls.length > 0 && (
         <ToolCallsTrace calls={message.tool_calls} />
       )}
-      <div className="text-sm text-zinc-800 leading-relaxed whitespace-pre-wrap">
-        {message.display_text ?? ""}
-      </div>
+      <SimpleMarkdown text={message.display_text ?? ""} />
       {message.referenced_contact_ids.length > 0 && (
         <ContactCardsRow contactIds={message.referenced_contact_ids} />
       )}
     </div>
+  );
+}
+
+/**
+ * Tiny markdown renderer. Handles **bold**, line breaks, bullet lists,
+ * and paragraphs. We avoid pulling in a full markdown library because we
+ * only need a few features and want to keep the bundle small.
+ */
+function SimpleMarkdown({ text }: { text: string }) {
+  // Split into blocks separated by blank lines
+  const blocks = text.split(/\n\s*\n/).filter((b) => b.trim());
+
+  return (
+    <div className="text-sm text-zinc-800 leading-relaxed space-y-3">
+      {blocks.map((block, i) => {
+        const lines = block.split("\n");
+        const isList = lines.every((l) => /^\s*[-*]\s/.test(l));
+
+        if (isList) {
+          return (
+            <ul key={i} className="list-disc pl-5 space-y-1">
+              {lines.map((line, j) => (
+                <li key={j}>
+                  <InlineMarkdown text={line.replace(/^\s*[-*]\s/, "")} />
+                </li>
+              ))}
+            </ul>
+          );
+        }
+
+        return (
+          <div key={i} className="whitespace-pre-wrap">
+            {lines.map((line, j) => (
+              <span key={j}>
+                <InlineMarkdown text={line} />
+                {j < lines.length - 1 && <br />}
+              </span>
+            ))}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+/**
+ * Renders inline formatting: **bold** and *italic*. Splits the text on
+ * markers and wraps the appropriate spans.
+ */
+function InlineMarkdown({ text }: { text: string }) {
+  // Split on **bold** segments. Capture group preserves the delimiters.
+  const parts = text.split(/(\*\*[^*]+\*\*)/);
+  return (
+    <>
+      {parts.map((part, i) => {
+        if (part.startsWith("**") && part.endsWith("**")) {
+          return (
+            <strong key={i} className="font-semibold">
+              {part.slice(2, -2)}
+            </strong>
+          );
+        }
+        return <span key={i}>{part}</span>;
+      })}
+    </>
   );
 }
 
