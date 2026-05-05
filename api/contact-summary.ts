@@ -103,7 +103,26 @@ export default async function handler(request: Request): Promise<Response> {
   }
 
   const token = authHeader.slice("Bearer ".length);
+
+  // Diagnostic logging — visible in Vercel function logs
+  console.log("[contact-summary] Token length:", token.length);
+  console.log("[contact-summary] Token prefix:", token.slice(0, 20));
+  console.log(
+    "[contact-summary] Anon key starts with:",
+    process.env.VITE_SUPABASE_ANON_KEY?.slice(0, 10),
+  );
+
   const { data: userData, error: userErr } = await anonClient.auth.getUser(token);
+
+  if (userErr) {
+    console.log("[contact-summary] getUser error:", JSON.stringify(userErr));
+  }
+  if (!userData?.user) {
+    console.log("[contact-summary] No user returned from getUser");
+  } else {
+    console.log("[contact-summary] User verified:", userData.user.id);
+  }
+
   if (userErr || !userData?.user) {
     return jsonError(401, "Invalid or expired session.");
   }
