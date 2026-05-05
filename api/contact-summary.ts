@@ -103,26 +103,7 @@ export default async function handler(request: Request): Promise<Response> {
   }
 
   const token = authHeader.slice("Bearer ".length);
-
-  // Diagnostic logging — visible in Vercel function logs
-  console.log("[contact-summary] Token length:", token.length);
-  console.log("[contact-summary] Token prefix:", token.slice(0, 20));
-  console.log(
-    "[contact-summary] Anon key starts with:",
-    process.env.VITE_SUPABASE_ANON_KEY?.slice(0, 10),
-  );
-
   const { data: userData, error: userErr } = await anonClient.auth.getUser(token);
-
-  if (userErr) {
-    console.log("[contact-summary] getUser error:", JSON.stringify(userErr));
-  }
-  if (!userData?.user) {
-    console.log("[contact-summary] No user returned from getUser");
-  } else {
-    console.log("[contact-summary] User verified:", userData.user.id);
-  }
-
   if (userErr || !userData?.user) {
     return jsonError(401, "Invalid or expired session.");
   }
@@ -237,7 +218,6 @@ type ContactDataBundle = {
   contact: {
     first_name: string;
     last_name: string;
-    title: string | null;
     primary_program_name: string | null;
   };
   officer_terms: { officer_type: string; start_date: string; end_date: string | null }[];
@@ -267,7 +247,7 @@ async function fetchContactData(
   ] = await Promise.all([
     supabase
       .from("active_contacts")
-      .select("first_name, last_name, title")
+      .select("first_name, last_name")
       .eq("id", contactId)
       .maybeSingle(),
     supabase
@@ -290,7 +270,7 @@ async function fetchContactData(
     supabase.from("active_contact_categories").select("id, name"),
     supabase
       .from("active_program_affiliations")
-      .select("program_id, role, start_year, end_year")
+      .select("program_id, affiliation_type, start_year, end_year")
       .eq("contact_id", contactId)
       .order("start_year", { ascending: false }),
     supabase.from("active_programs").select("id, name"),
@@ -348,7 +328,6 @@ async function fetchContactData(
     contact: {
       first_name: contactRes.data.first_name,
       last_name: contactRes.data.last_name,
-      title: contactRes.data.title ?? null,
       primary_program_name,
     },
     officer_terms: officerTermsRes.data ?? [],
@@ -371,7 +350,6 @@ function formatContactDataForPrompt(d: ContactDataBundle): string {
   const c = d.contact;
 
   lines.push(`Name: ${c.first_name} ${c.last_name}`);
-  if (c.title) lines.push(`Title: ${c.title}`);
   if (c.primary_program_name) {
     lines.push(`Primary affiliation: ${c.primary_program_name}`);
   }
