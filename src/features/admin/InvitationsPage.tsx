@@ -3,7 +3,8 @@
 // /admin/invitations
 // =============================================================================
 // Pick an existing contact (with email), send them an invitation. View pending,
-// accepted, expired, and revoked invitations. Revoke or resend any of them.
+// accepted, expired, and revoked invitations. Revoke, resend, or copy the
+// invite link to share manually until email automation is built.
 // =============================================================================
 
 import { useMemo, useState } from "react";
@@ -45,6 +46,10 @@ function relativeTime(iso: string) {
   return `${Math.floor(days / 365)}y ago`;
 }
 
+function inviteLinkFor(token: string) {
+  return `${window.location.origin}/accept-invitation?token=${token}`;
+}
+
 export default function InvitationsPage() {
   const [search, setSearch] = useState("");
   const [selectedContactId, setSelectedContactId] = useState<string | null>(
@@ -52,6 +57,7 @@ export default function InvitationsPage() {
   );
   const [formError, setFormError] = useState<string | null>(null);
   const [flash, setFlash] = useState<string | null>(null);
+  const [copiedId, setCopiedId] = useState<string | null>(null);
 
   const { data: invitations, isLoading: invitesLoading } = useInvitations();
   const { data: invitableContacts, isLoading: contactsLoading } =
@@ -69,17 +75,13 @@ export default function InvitationsPage() {
     return invitableContacts
       .filter((c) => {
         const name = `${c.first_name ?? ""} ${c.last_name ?? ""}`.toLowerCase();
-        return (
-          name.includes(q) ||
-          c.email.toLowerCase().includes(q)
-        );
+        return name.includes(q) || c.email.toLowerCase().includes(q);
       })
       .slice(0, 50);
   }, [invitableContacts, search]);
 
   const selectedContact = useMemo(
-    () =>
-      invitableContacts?.find((c) => c.id === selectedContactId) ?? null,
+    () => invitableContacts?.find((c) => c.id === selectedContactId) ?? null,
     [invitableContacts, selectedContactId],
   );
 
@@ -91,19 +93,31 @@ export default function InvitationsPage() {
       return;
     }
     try {
-      await sendMutation.mutateAsync({
+      const result = await sendMutation.mutateAsync({
         contact_id: selectedContact.id,
         email: selectedContact.email,
       });
-      setFlash(
-        `Invitation sent to ${selectedContact.first_name ?? ""} ${
-          selectedContact.last_name ?? ""
-        } (${selectedContact.email}).`,
-      );
+      // Auto-copy the new invite link, since email isn't wired up yet.
+      try {
+        const link = inviteLinkFor(result.token);
+        await navigator.clipboard.writeText(link);
+        setFlash(
+          `Invitation sent to ${selectedContact.first_name ?? ""} ${
+            selectedContact.last_name ?? ""
+          }. Invite link copied to your clipboard.`,
+        );
+      } catch {
+        setFlash(
+          `Invitation sent to ${selectedContact.first_name ?? ""} ${
+            selectedContact.last_name ?? ""
+          }. Use "Copy link" in the table to share.`,
+        );
+      }
       setSelectedContactId(null);
       setSearch("");
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : "Failed to send invitation.";
+      const msg =
+        err instanceof Error ? err.message : "Failed to send invitation.";
       setFormError(msg);
     }
   }
@@ -126,6 +140,19 @@ export default function InvitationsPage() {
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : "Failed to resend.";
       setFormError(msg);
+    }
+  }
+
+  async function handleCopyLink(row: InvitationRow) {
+    setFormError(null);
+    try {
+      await navigator.clipboard.writeText(inviteLinkFor(row.token));
+      setCopiedId(row.id);
+      setTimeout(() => {
+        setCopiedId((prev) => (prev === row.id ? null : prev));
+      }, 1500);
+    } catch {
+      setFormError("Couldn't copy to clipboard. Browser may have blocked it.");
     }
   }
 
@@ -170,9 +197,7 @@ export default function InvitationsPage() {
               }
             }}
             placeholder={
-              contactsLoading
-                ? "Loading contacts…"
-                : "Search by name or email…"
+              contactsLoading ? "Loading contacts…" : "Search by name or email…"
             }
             className="w-full rounded-md border border-zinc-300 px-3 py-2 text-sm focus:border-maroon-700 focus:outline-none focus:ring-1 focus:ring-maroon-700"
             disabled={sendMutation.isPending}
@@ -230,9 +255,7 @@ export default function InvitationsPage() {
           )}
         </div>
 
-        {formError && (
-          <p className="mt-2 text-sm text-rose-700">{formError}</p>
-        )}
+        {formError && <p className="mt-2 text-sm text-rose-700">{formError}</p>}
         {flash && <p className="mt-2 text-sm text-emerald-700">{flash}</p>}
       </section>
 
@@ -274,6 +297,14 @@ export default function InvitationsPage() {
                     </td>
                     <td className="px-4 py-3">
                       <div className="flex justify-end gap-2">
+                        {row.computed_status === "pending" && (
+                          <button
+                            onClick={() => handleCopyLink(row)}
+                            className="rounded-md border border-zinc-300 px-2.5 py-1 text-xs font-medium text-zinc-700 hover:bg-zinc-50"
+                          >
+                            {copiedId === row.id ? "Copied!" : "Copy link"}
+                          </button>
+                        )}
                         {row.computed_status !== "accepted" && (
                           <button
                             onClick={() => handleResend(row)}
