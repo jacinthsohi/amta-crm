@@ -1,199 +1,200 @@
-import { useState, type FormEvent } from "react";
-import { Link } from "react-router-dom";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowLeft, Mail, Loader2, AlertCircle, CheckCircle2, Copy } from "lucide-react";
-import { supabase } from "@/lib/supabase";
-import { useAuth } from "@/lib/auth";
-import { formatError } from "@/lib/errors";
+// src/features/admin/InvitationsPage.tsx
+// =============================================================================
+// /admin/invitations
+// =============================================================================
+// Send a new invitation, view pending/expired/revoked, revoke, resend.
+// =============================================================================
 
-/**
- * Minimal admin invitation surface.
- *
- * For Phase 3 this is intentionally bare-bones:
- *   - Pick a contact who has no auth account yet
- *   - Click "Send invitation"
- *   - We generate a unique token, write a row to `invitations`, and
- *     display the invitation URL the admin can share.
- *
- * Sending the actual email is deferred to Supabase's built-in email feature,
- * which we'll wire later via supabase.auth.admin.inviteUserByEmail. For now,
- * the admin can paste the URL into an email manually — good enough for v1
- * and lets us test the flow end-to-end without configuring SMTP.
- *
- * In Phase 4+ we'll move this into a richer UI tied into the contacts list.
- */
+import { useState } from 'react'
+import {
+  useInvitations,
+  useSendInvitation,
+  useRevokeInvitation,
+  useResendInvitation,
+  type InvitationRow,
+  type InvitationStatus,
+} from './hooks'
+
+const STATUS_STYLES: Record<InvitationStatus, string> = {
+  pending: 'bg-amber-50 text-amber-800 border-amber-200',
+  accepted: 'bg-emerald-50 text-emerald-800 border-emerald-200',
+  expired: 'bg-neutral-100 text-neutral-600 border-neutral-200',
+  revoked: 'bg-rose-50 text-rose-800 border-rose-200',
+}
+
+function StatusBadge({ status }: { status: InvitationStatus }) {
+  return (
+    <span
+      className={`inline-block rounded-full border px-2 py-0.5 text-xs font-medium capitalize ${STATUS_STYLES[status]}`}
+    >
+      {status}
+    </span>
+  )
+}
+
+function relativeTime(iso: string) {
+  const d = new Date(iso)
+  const diff = Date.now() - d.getTime()
+  const days = Math.floor(diff / 86_400_000)
+  if (days === 0) return 'today'
+  if (days === 1) return 'yesterday'
+  if (days < 30) return `${days}d ago`
+  if (days < 365) return `${Math.floor(days / 30)}mo ago`
+  return `${Math.floor(days / 365)}y ago`
+}
+
 export default function InvitationsPage() {
-  const { contact: currentContact } = useAuth();
-  const queryClient = useQueryClient();
+  const [email, setEmail] = useState('')
+  const [formError, setFormError] = useState<string | null>(null)
+  const [flash, setFlash] = useState<string | null>(null)
 
-  const [selectedContactId, setSelectedContactId] = useState<string | null>(null);
-  const [generatedUrl, setGeneratedUrl] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const { data: invitations, isLoading } = useInvitations()
+  const sendMutation = useSendInvitation()
+  const revokeMutation = useRevokeInvitation()
+  const resendMutation = useResendInvitation()
 
-  // Pull all contacts with no auth account yet (these are the ones eligible to invite)
-  const { data: invitableContacts, isLoading: contactsLoading } = useQuery({
-    queryKey: ["invitable-contacts"],
-    queryFn: async () => {
-      const { data, error } = await supabase
-        .from("active_contacts")
-        .select("*")
-        .is("auth_user_id", null)
-        .not("email", "is", null)
-        .order("last_name", { ascending: true });
-      if (error) throw error;
-      return data ?? [];
-    },
-  });
+  async function handleSend(e: React.FormEvent) {
+    e.preventDefault()
+    setFormError(null)
+    setFlash(null)
+    const trimmed = email.trim().toLowerCase()
+    if (!trimmed || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(trimmed)) {
+      setFormError('Please enter a valid email address.')
+      return
+    }
+    // Client-side dedupe check (server enforces too via unique index, presumably)
+    const existingPending = invitations?.find(
+      i => i.email.toLowerCase() === trimmed && i.computed_status === 'pending'
+    )
+    if (existingPending) {
+      setFormError('A pending invitation already exists for this email. Resend it instead.')
+      return
+    }
+    try {
+      await sendMutation.mutateAsync(trimmed)
+      setEmail('')
+      setFlash(`Invitation sent to ${trimmed}.`)
+    } catch (err: any) {
+      setFormError(err.message || 'Failed to send invitation.')
+    }
+  }
 
-  const sendInvitation = useMutation({
-    mutationFn: async (contactId: string) => {
-      setError(null);
-      setGeneratedUrl(null);
-      const contact = invitableContacts?.find((c) => c.id === contactId);
-      if (!contact) throw new Error("Contact not found.");
-      if (!contact.email) throw new Error("Contact has no email on file.");
+  async function handleRevoke(row: InvitationRow) {
+    if (!confirm(`Revoke invitation for ${row.email}?`)) return
+    try {
+      await revokeMutation.mutateAsync(row.id)
+      setFlash(`Revoked invitation for ${row.email}.`)
+    } catch (err: any) {
+      setFormError(err.message || 'Failed to revoke.')
+    }
+  }
 
-      // Generate a random token
-      const token = crypto.randomUUID() + "-" + Math.random().toString(36).slice(2, 10);
-      const expiresAt = new Date();
-      expiresAt.setDate(expiresAt.getDate() + 14); // 2-week expiry
-
-      const { error: insertErr } = await supabase
-        .from("invitations")
-        .insert({
-          contact_id: contact.id,
-          email: contact.email,
-          token,
-          invited_by: currentContact?.id ?? null,
-          expires_at: expiresAt.toISOString(),
-        });
-      if (insertErr) throw new Error(insertErr.message);
-
-      const url = `${window.location.origin}/accept-invitation?token=${token}`;
-      return url;
-    },
-    onSuccess: (url) => {
-      setGeneratedUrl(url);
-      setSelectedContactId(null);
-      queryClient.invalidateQueries({ queryKey: ["invitable-contacts"] });
-    },
-    onError: (e) => {
-      setError(formatError(e));
-    },
-  });
-
-  const handleSubmit = (e: FormEvent) => {
-    e.preventDefault();
-    if (!selectedContactId) return;
-    sendInvitation.mutate(selectedContactId);
-  };
-
-  const copyUrl = () => {
-    if (!generatedUrl) return;
-    navigator.clipboard.writeText(generatedUrl);
-  };
+  async function handleResend(row: InvitationRow) {
+    try {
+      await resendMutation.mutateAsync(row.id)
+      setFlash(`Refreshed invitation for ${row.email}. New expiry: 14 days.`)
+    } catch (err: any) {
+      setFormError(err.message || 'Failed to resend.')
+    }
+  }
 
   return (
-    <div className="min-h-screen flex flex-col">
-      <header className="flex items-center gap-3 px-6 py-3 border-b border-zinc-200">
-        <Link
-          to="/"
-          className="text-zinc-500 hover:text-zinc-900 flex items-center gap-1 text-sm"
-        >
-          <ArrowLeft size={13} />
-          Home
-        </Link>
-        <span className="text-zinc-300">·</span>
-        <span className="text-sm font-semibold text-zinc-900">Invite a user</span>
+    <div className="mx-auto max-w-4xl px-6 py-8">
+      <header className="mb-8">
+        <h1 className="text-2xl font-semibold text-neutral-900">Invitations</h1>
+        <p className="mt-1 text-sm text-neutral-600">
+          Invite people to the AMTA CRM. Only invited emails (or existing contacts)
+          can sign in.
+        </p>
       </header>
 
-      <main className="flex-1 px-6 py-8">
-        <div className="max-w-md mx-auto">
-          <div className="bg-white border border-zinc-200 rounded-lg p-6">
-            <h1 className="text-base font-semibold text-zinc-900 mb-1">
-              Invite a contact
-            </h1>
-            <p className="text-xs text-zinc-500 mb-5">
-              Generate an invitation link for an existing contact who has no
-              auth account yet.
-            </p>
+      {/* Send form */}
+      <section className="mb-8 rounded-lg border border-neutral-200 bg-white p-5">
+        <h2 className="mb-3 text-sm font-medium text-neutral-900">Send a new invitation</h2>
+        <form onSubmit={handleSend} className="flex flex-col gap-3 sm:flex-row">
+          <input
+            type="email"
+            value={email}
+            onChange={e => setEmail(e.target.value)}
+            placeholder="name@example.com"
+            className="flex-1 rounded-md border border-neutral-300 px-3 py-2 text-sm focus:border-[#70172a] focus:outline-none focus:ring-1 focus:ring-[#70172a]"
+            disabled={sendMutation.isPending}
+          />
+          <button
+            type="submit"
+            disabled={sendMutation.isPending}
+            className="rounded-md bg-[#70172a] px-4 py-2 text-sm font-medium text-white hover:bg-[#5a1222] disabled:opacity-50"
+          >
+            {sendMutation.isPending ? 'Sending…' : 'Send invitation'}
+          </button>
+        </form>
+        {formError && <p className="mt-2 text-sm text-rose-700">{formError}</p>}
+        {flash && <p className="mt-2 text-sm text-emerald-700">{flash}</p>}
+      </section>
 
-            <form onSubmit={handleSubmit} className="space-y-3">
-              <div>
-                <label className="text-xs font-medium text-zinc-700 mb-1.5 block">
-                  Contact
-                </label>
-                <select
-                  value={selectedContactId ?? ""}
-                  onChange={(e) => setSelectedContactId(e.target.value || null)}
-                  required
-                  disabled={contactsLoading}
-                  className="w-full px-3 py-2 text-sm rounded-md border border-zinc-200 outline-none focus:border-maroon-700"
-                >
-                  <option value="">
-                    {contactsLoading ? "Loading…" : "Pick a contact"}
-                  </option>
-                  {invitableContacts?.map((c) => (
-                    <option key={c.id} value={c.id}>
-                      {c.first_name} {c.last_name} — {c.email}
-                    </option>
-                  ))}
-                </select>
-                {invitableContacts?.length === 0 && (
-                  <p className="text-xs text-zinc-500 mt-1.5">
-                    No invitable contacts yet. Phase 4 will let you create
-                    contacts; for now you can add them directly in Supabase's
-                    Table Editor.
-                  </p>
-                )}
-              </div>
-
-              {error && (
-                <div className="flex items-start gap-2 text-xs text-red-600 px-1">
-                  <AlertCircle size={12} className="mt-0.5 shrink-0" />
-                  <span>{error}</span>
-                </div>
-              )}
-
-              <button
-                type="submit"
-                disabled={!selectedContactId || sendInvitation.isPending}
-                className="w-full flex items-center justify-center gap-2 px-3 py-2 rounded-md text-sm font-medium text-white bg-maroon-700 hover:bg-maroon-800 disabled:opacity-60 transition-colors"
-              >
-                {sendInvitation.isPending ? (
-                  <Loader2 size={14} className="animate-spin" />
-                ) : (
-                  <Mail size={14} />
-                )}
-                Generate invitation link
-              </button>
-            </form>
-
-            {generatedUrl && (
-              <div className="mt-5 p-3 rounded-md bg-green-50 border border-green-100">
-                <div className="flex items-center gap-2 text-sm font-medium text-green-800 mb-2">
-                  <CheckCircle2 size={14} />
-                  Invitation created
-                </div>
-                <p className="text-xs text-green-900 leading-relaxed mb-2">
-                  Copy this link and send it to the contact. The link is valid
-                  for 14 days.
-                </p>
-                <div className="flex items-center gap-2 px-2 py-1.5 rounded bg-white border border-green-200 text-xs font-mono text-zinc-800 break-all">
-                  <span className="flex-1">{generatedUrl}</span>
-                  <button
-                    onClick={copyUrl}
-                    className="shrink-0 text-green-700 hover:text-green-900"
-                    title="Copy"
-                  >
-                    <Copy size={12} />
-                  </button>
-                </div>
-              </div>
-            )}
+      {/* List */}
+      <section>
+        <h2 className="mb-3 text-sm font-medium text-neutral-900">All invitations</h2>
+        {isLoading ? (
+          <p className="text-sm text-neutral-500">Loading…</p>
+        ) : !invitations || invitations.length === 0 ? (
+          <p className="text-sm text-neutral-500">No invitations yet.</p>
+        ) : (
+          <div className="overflow-hidden rounded-lg border border-neutral-200 bg-white">
+            <table className="w-full text-sm">
+              <thead className="bg-neutral-50 text-left text-xs uppercase tracking-wide text-neutral-500">
+                <tr>
+                  <th className="px-4 py-2 font-medium">Email</th>
+                  <th className="px-4 py-2 font-medium">Status</th>
+                  <th className="px-4 py-2 font-medium">Sent</th>
+                  <th className="px-4 py-2 font-medium">Expires</th>
+                  <th className="px-4 py-2"></th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-neutral-100">
+                {invitations.map(row => (
+                  <tr key={row.id}>
+                    <td className="px-4 py-3 text-neutral-900">{row.email}</td>
+                    <td className="px-4 py-3">
+                      <StatusBadge status={row.computed_status} />
+                    </td>
+                    <td className="px-4 py-3 text-neutral-600">
+                      {relativeTime(row.created_at)}
+                    </td>
+                    <td className="px-4 py-3 text-neutral-600">
+                      {row.computed_status === 'accepted'
+                        ? '—'
+                        : new Date(row.expires_at).toLocaleDateString()}
+                    </td>
+                    <td className="px-4 py-3">
+                      <div className="flex justify-end gap-2">
+                        {row.computed_status !== 'accepted' && (
+                          <button
+                            onClick={() => handleResend(row)}
+                            disabled={resendMutation.isPending}
+                            className="rounded-md border border-neutral-300 px-2.5 py-1 text-xs font-medium text-neutral-700 hover:bg-neutral-50 disabled:opacity-50"
+                          >
+                            Resend
+                          </button>
+                        )}
+                        {row.computed_status === 'pending' && (
+                          <button
+                            onClick={() => handleRevoke(row)}
+                            disabled={revokeMutation.isPending}
+                            className="rounded-md border border-rose-200 px-2.5 py-1 text-xs font-medium text-rose-700 hover:bg-rose-50 disabled:opacity-50"
+                          >
+                            Revoke
+                          </button>
+                        )}
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </div>
-        </div>
-      </main>
+        )}
+      </section>
     </div>
-  );
+  )
 }

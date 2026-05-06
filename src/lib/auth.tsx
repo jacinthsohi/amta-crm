@@ -19,12 +19,16 @@ import type { Contact } from "./database.types";
  *   resolve it once at sign-in and surface it here.
  * - `loading`: true while we're figuring out who the user is on first load.
  *   Used to prevent flashing the login screen for already-signed-in users.
+ * - `accessDenied`: true if the user signed in but isn't on the invite list
+ *   or in contacts. We sign them out immediately and surface a banner on
+ *   the login page. (Issue #25.)
  */
 type AuthContextValue = {
   session: Session | null;
   user: User | null;
   contact: Contact | null;
   loading: boolean;
+  accessDenied: boolean;
   signOut: () => Promise<void>;
 };
 
@@ -34,10 +38,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [session, setSession] = useState<Session | null>(null);
   const [contact, setContact] = useState<Contact | null>(null);
   const [loading, setLoading] = useState(true);
+  const [accessDenied, setAccessDenied] = useState(false);
 
   // Resolve the contacts row matching the current auth user.
-  // Returns null if no matching contact exists yet (e.g. an admin signed up
-  // through Google before being invited — we'll handle this case below).
   async function loadContact(authUserId: string) {
     const { data, error } = await supabase
       .from("active_contacts")
@@ -51,16 +54,43 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return data;
   }
 
+  // Access gate (#25): a signed-in user is allowed if EITHER:
+  //   - they have a contact row (loaded above), OR
+  //   - their email has an accepted, unrevoked invitation.
+  // If neither, sign them out and flag accessDenied so the login page can
+  // show the "not invited" banner.
+  async function checkAccessByInvitation(email: string): Promise<boolean> {
+    const normalized = email.toLowerCase().trim();
+    const { data, error } = await supabase
+      .from("invitations")
+      .select("id")
+      .eq("email", normalized)
+      .not("accepted_at", "is", null)
+      .is("revoked_at", null)
+      .maybeSingle();
+    if (error) {
+      // Fail open on transient error — don't lock out a real user over a
+      // network blip. Logged so we can flip to fail-closed if abused.
+      console.warn("Invitation check failed, allowing through:", error);
+      return true;
+    }
+    return Boolean(data);
+  }
+
+  async function enforceAccessGate(
+    authUser: User,
+    loadedContact: Contact | null,
+  ): Promise<{ allowed: boolean }> {
+    if (loadedContact) return { allowed: true };
+    if (!authUser.email) return { allowed: false };
+    const invited = await checkAccessByInvitation(authUser.email);
+    return { allowed: invited };
+  }
+
   useEffect(() => {
-    // Fetch the initial session on app boot.
-    //
-    // Stale-cache recovery: if the cached Supabase session in localStorage
-    // refers to credentials the server can't validate (which can happen
-    // after migrations, RLS changes, or anon key rotations), getSession()
-    // can hang forever and the app stays stuck on "Loading…". To recover
-    // automatically, we race the call against a 5-second timeout. If the
-    // timeout wins, we nuke the cached session and reload, which forces a
-    // fresh auth flow from a clean state.
+    // Stale-cache recovery: if cached Supabase session refers to creds the
+    // server can't validate, getSession() can hang forever and the app stays
+    // stuck on "Loading…". Race against a 5s timeout and force a fresh flow.
     let cancelled = false;
     let timeoutId: ReturnType<typeof setTimeout> | null = null;
 
@@ -90,9 +120,25 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       .then(async ({ data }) => {
         if (cancelled) return;
         if (timeoutId) clearTimeout(timeoutId);
-        setSession(data.session);
+
         if (data.session?.user) {
-          setContact(await loadContact(data.session.user.id));
+          const loaded = await loadContact(data.session.user.id);
+          const { allowed } = await enforceAccessGate(data.session.user, loaded);
+          if (cancelled) return;
+
+          if (allowed) {
+            setSession(data.session);
+            setContact(loaded);
+          } else {
+            // Not invited. Sign out and flag for the login banner.
+            await supabase.auth.signOut();
+            setSession(null);
+            setContact(null);
+            setAccessDenied(true);
+          }
+        } else {
+          setSession(null);
+          setContact(null);
         }
         setLoading(false);
       })
@@ -100,20 +146,33 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         if (cancelled) return;
         if (timeoutId) clearTimeout(timeoutId);
         console.error("Auth getSession failed:", err);
-        // On error (as opposed to hang), fall back to "no session" rather
-        // than reloading. The user can then sign in fresh.
         setSession(null);
         setLoading(false);
       });
 
-    // Subscribe to auth changes (login, logout, token refresh, etc.)
+    // Subscribe to auth changes (login, logout, token refresh).
     const {
       data: { subscription },
     } = supabase.auth.onAuthStateChange(async (_event, newSession) => {
-      setSession(newSession);
+      if (cancelled) return;
+
       if (newSession?.user) {
-        setContact(await loadContact(newSession.user.id));
+        const loaded = await loadContact(newSession.user.id);
+        const { allowed } = await enforceAccessGate(newSession.user, loaded);
+        if (cancelled) return;
+
+        if (allowed) {
+          setSession(newSession);
+          setContact(loaded);
+          setAccessDenied(false);
+        } else {
+          await supabase.auth.signOut();
+          setSession(null);
+          setContact(null);
+          setAccessDenied(true);
+        }
       } else {
+        setSession(null);
         setContact(null);
       }
     });
@@ -128,6 +187,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const signOut = async () => {
     await supabase.auth.signOut();
     setContact(null);
+    setAccessDenied(false);
   };
 
   return (
@@ -137,6 +197,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         user: session?.user ?? null,
         contact,
         loading,
+        accessDenied,
         signOut,
       }}
     >

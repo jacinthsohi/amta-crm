@@ -11,8 +11,11 @@ import {
   Search,
   Sparkles,
   LogOut,
+  Shield,
+  Mail,
 } from "lucide-react";
 import { useAuth } from "@/lib/auth";
+import { useIsAdmin } from "@/features/admin/hooks";
 import { cn } from "@/lib/cn";
 import { initialsOf } from "@/lib/format";
 
@@ -30,6 +33,7 @@ const NAV_ITEMS = [
 
 export function Sidebar({ onSearch }: { onSearch: () => void }) {
   const { contact, user, signOut } = useAuth();
+  const { isAdmin } = useIsAdmin();
   const navigate = useNavigate();
   const location = useLocation();
 
@@ -95,6 +99,43 @@ export function Sidebar({ onSearch }: { onSearch: () => void }) {
           );
         })}
       </nav>
+
+      {/* Admin section — only visible to admins */}
+      {isAdmin && (
+        <div className="px-2 pb-2 border-t border-zinc-200 pt-2">
+          <div className="px-2.5 pb-1 text-[10px] font-semibold uppercase tracking-wider text-zinc-400">
+            Admin
+          </div>
+          <NavLink
+            to="/admin/invitations"
+            className={({ isActive }) =>
+              cn(
+                "flex items-center gap-2.5 px-2.5 py-1.5 rounded-md text-sm transition-colors mb-0.5",
+                isActive
+                  ? "bg-maroon-50 text-maroon-700 font-medium"
+                  : "text-zinc-700 hover:bg-zinc-100",
+              )
+            }
+          >
+            <Mail size={15} />
+            <span>Invitations</span>
+          </NavLink>
+          <NavLink
+            to="/admin/access"
+            className={({ isActive }) =>
+              cn(
+                "flex items-center gap-2.5 px-2.5 py-1.5 rounded-md text-sm transition-colors mb-0.5",
+                isActive
+                  ? "bg-maroon-50 text-maroon-700 font-medium"
+                  : "text-zinc-700 hover:bg-zinc-100",
+              )
+            }
+          >
+            <Shield size={15} />
+            <span>Access</span>
+          </NavLink>
+        </div>
+      )}
 
       {/* Profile */}
       <div className="px-3 py-3 border-t border-zinc-200">

@@ -37,3 +37,6 @@ lerna-debug.log*
 # Supabase local CLI artifacts (we use the dashboard for now)
 supabase/.branches
 supabase/.temp
+
+# Backup files (e.g., auth.tsx.backup we made before risky edits)
+*.backup

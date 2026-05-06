@@ -18,6 +18,8 @@ import { AppLayout } from "@/features/layout/AppLayout";
 import DashboardPage from "@/features/dashboard/DashboardPage";
 import InvitationsPage from "@/features/admin/InvitationsPage";
 import ContactsListPage from "@/features/contacts/ContactsListPage";
+import AdminGate from "@/features/admin/AdminGate";
+import AccessPage from "@/features/admin/AccessPage";
 import ContactDetailPage from "@/features/contacts/ContactDetailPage";
 import ProgramsListPage from "@/features/programs/ProgramsListPage";
 import ProgramDetailPage from "@/features/programs/ProgramDetailPage";
@@ -108,7 +110,22 @@ export default function App() {
               />
               <Route path="tasks" element={<TasksListPage />} />
               <Route path="ask" element={<AskPage />} />
-              <Route path="admin/invitations" element={<InvitationsPage />} />
+              <Route
+                path="admin/invitations"
+                element={
+                  <AdminGate>
+                    <InvitationsPage />
+                  </AdminGate>
+                }
+              />
+              <Route
+                path="admin/access"
+                element={
+                  <AdminGate>
+                    <AccessPage />
+                  </AdminGate>
+                }
+              />
             </Route>
           </Routes>
         </AuthProvider>
