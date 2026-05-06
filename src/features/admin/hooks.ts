@@ -9,8 +9,7 @@ import { useAuth } from "../../lib/auth";
 
 // ---------------------------------------------------------------------------
 // useIsAdmin: is the current user flagged is_admin?
-// We read from `contact` in the auth context (already loaded at sign-in)
-// rather than making a separate query. Single source of truth.
+// Reads from the auth context's `contact` (already loaded at sign-in).
 // ---------------------------------------------------------------------------
 export function useIsAdmin() {
   const { contact, loading } = useAuth();
@@ -27,12 +26,15 @@ export type InvitationStatus = "pending" | "accepted" | "expired" | "revoked";
 
 export interface InvitationRow {
   id: string;
+  contact_id: string;
   email: string;
   token: string;
-  created_at: string;
-  expires_at: string;
+  invited_by: string | null;
+  sent_at: string;
+  expires_at: string | null;
   accepted_at: string | null;
   revoked_at: string | null;
+  created_at: string;
   computed_status: InvitationStatus;
 }
 
@@ -51,12 +53,72 @@ export function useInvitations() {
 }
 
 // ---------------------------------------------------------------------------
+// useInvitableContacts: contacts with an email and no active invitation yet.
+// Powers the "Invite a contact" dropdown.
+// ---------------------------------------------------------------------------
+export interface InvitableContact {
+  id: string;
+  first_name: string | null;
+  last_name: string | null;
+  email: string;
+}
+
+export function useInvitableContacts() {
+  return useQuery({
+    queryKey: ["invitable-contacts"],
+    queryFn: async () => {
+      // 1. Pull every active contact with an email.
+      const { data: contacts, error: contactsErr } = await supabase
+        .from("active_contacts")
+        .select("id, first_name, last_name, email")
+        .not("email", "is", null);
+      if (contactsErr) throw contactsErr;
+
+      // 2. Pull every invitation that's still pending or already accepted.
+      //    These contacts shouldn't appear in the dropdown.
+      const { data: existingInvites, error: invErr } = await supabase
+        .from("active_invitations_view")
+        .select("contact_id, computed_status");
+      if (invErr) throw invErr;
+
+      const blockedContactIds = new Set(
+        (existingInvites ?? [])
+          .filter(
+            (i) =>
+              i.computed_status === "pending" ||
+              i.computed_status === "accepted",
+          )
+          .map((i) => i.contact_id),
+      );
+
+      const invitable: InvitableContact[] = (contacts ?? [])
+        .filter((c) => c.email && !blockedContactIds.has(c.id))
+        .map((c) => ({
+          id: c.id,
+          first_name: c.first_name,
+          last_name: c.last_name,
+          email: c.email as string,
+        }));
+
+      // Sort alphabetically by last name, then first.
+      invitable.sort((a, b) => {
+        const al = (a.last_name ?? "").toLowerCase();
+        const bl = (b.last_name ?? "").toLowerCase();
+        if (al !== bl) return al.localeCompare(bl);
+        return (a.first_name ?? "").localeCompare(b.first_name ?? "");
+      });
+
+      return invitable;
+    },
+  });
+}
+
+// ---------------------------------------------------------------------------
 // Mutations: send / revoke / resend
 // ---------------------------------------------------------------------------
 const INVITATION_TTL_DAYS = 14;
 
 function generateToken() {
-  // 32 random bytes, hex-encoded. Browser-native, no deps.
   const bytes = new Uint8Array(32);
   crypto.getRandomValues(bytes);
   return Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
@@ -70,14 +132,19 @@ function expiryDate() {
 
 export function useSendInvitation() {
   const qc = useQueryClient();
+  const { contact: currentContact } = useAuth();
+
   return useMutation({
-    mutationFn: async (email: string) => {
-      const normalized = email.toLowerCase().trim();
+    mutationFn: async (input: { contact_id: string; email: string }) => {
+      const now = new Date().toISOString();
       const { data, error } = await supabase
         .from("invitations")
         .insert({
-          email: normalized,
+          contact_id: input.contact_id,
+          email: input.email.toLowerCase().trim(),
           token: generateToken(),
+          invited_by: currentContact?.id ?? null,
+          sent_at: now,
           expires_at: expiryDate(),
         })
         .select()
@@ -85,7 +152,10 @@ export function useSendInvitation() {
       if (error) throw error;
       return data;
     },
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["invitations"] }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["invitations"] });
+      qc.invalidateQueries({ queryKey: ["invitable-contacts"] });
+    },
   });
 }
 
@@ -99,7 +169,10 @@ export function useRevokeInvitation() {
         .eq("id", id);
       if (error) throw error;
     },
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["invitations"] }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["invitations"] });
+      qc.invalidateQueries({ queryKey: ["invitable-contacts"] });
+    },
   });
 }
 
@@ -107,18 +180,23 @@ export function useResendInvitation() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async (id: string) => {
-      // Resend = new token + extended expiry, in place.
+      // Resend = new token + extended expiry, in place. Also un-revoke if
+      // the user is choosing to bring the invite back.
       const { error } = await supabase
         .from("invitations")
         .update({
           token: generateToken(),
+          sent_at: new Date().toISOString(),
           expires_at: expiryDate(),
-          revoked_at: null, // un-revoke if previously revoked
+          revoked_at: null,
         })
         .eq("id", id);
       if (error) throw error;
     },
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["invitations"] }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["invitations"] });
+      qc.invalidateQueries({ queryKey: ["invitable-contacts"] });
+    },
   });
 }
 
