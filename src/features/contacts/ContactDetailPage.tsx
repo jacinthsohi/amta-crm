@@ -206,6 +206,9 @@ function Hero({
             <h1 className="text-[24px] font-semibold tracking-tight text-zinc-900">
               {c.first_name} {c.last_name}
             </h1>
+            {c.pronouns && (
+              <span className="text-sm text-zinc-500">({c.pronouns})</span>
+            )}
             {isCurrentBoard(c) && <Tag tone="maroon">Current Board</Tag>}
             {c.standing === "active" && !isCurrentBoard(c) && (
               <Tag tone="success">Active</Tag>

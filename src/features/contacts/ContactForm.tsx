@@ -22,6 +22,7 @@ import { RichTextEditor } from "@/components/RichTextEditor";
 type FormState = {
   first_name: string;
   last_name: string;
+  pronouns: string;
   email: string;
   phone: string;
   notes: string;
@@ -32,6 +33,7 @@ type FormState = {
 const blank: FormState = {
   first_name: "",
   last_name: "",
+  pronouns: "",
   email: "",
   phone: "",
   notes: "",
@@ -80,6 +82,7 @@ export function ContactForm({
       setForm({
         first_name: initialContact.first_name,
         last_name: initialContact.last_name,
+        pronouns: initialContact.pronouns ?? "",
         email: initialContact.email ?? "",
         phone: initialContact.phone ?? "",
         notes: initialContact.notes ?? "",
@@ -131,6 +134,7 @@ export function ContactForm({
         id: initialContact?.id,
         first_name: form.first_name.trim(),
         last_name: form.last_name.trim(),
+        pronouns: form.pronouns.trim() || null,
         email: form.email.trim() || null,
         phone: form.phone.trim() || null,
         notes: form.notes.trim() || null,
@@ -219,6 +223,17 @@ export function ContactForm({
           />
         </FieldGroup>
       </div>
+
+      <FieldGroup
+        label="Pronouns"
+        hint="Optional. Whatever the person uses — e.g. she/her, they/them, he/him."
+      >
+        <TextInput
+          value={form.pronouns}
+          onChange={(v) => set("pronouns", v)}
+          placeholder="she/her"
+        />
+      </FieldGroup>
 
       <FieldGroup label="Email" error={errors.email}>
         <TextInput
