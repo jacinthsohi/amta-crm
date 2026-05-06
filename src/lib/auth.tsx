@@ -41,11 +41,18 @@ const AuthContext = createContext<AuthContextValue | undefined>(undefined);
  * logic — they need a brief authenticated window to write contacts.auth_user_id
  * and invitations.accepted_at before the access gate fires. If the gate runs
  * on these routes, it races the acceptance flow and signs the user out before
- * acceptance completes (which is what bit Maggy on May 5).
+ * acceptance completes.
  */
 function isAcceptanceRoute(pathname: string) {
   return pathname.startsWith("/accept-invitation");
 }
+
+// Maximum time we'll wait for getSession() before giving up and treating the
+// user as signed out. Earlier versions wiped localStorage and force-reloaded
+// when this fired — that was destroying valid sessions on slow refreshes
+// (the bug we hit on May 6). Now we just stop the loading spinner; the user
+// can retry without losing their stored session.
+const GET_SESSION_TIMEOUT_MS = 15_000;
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [session, setSession] = useState<Session | null>(null);
@@ -99,38 +106,27 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }
 
   useEffect(() => {
-    // Stale-cache recovery: if cached Supabase session refers to creds the
-    // server can't validate, getSession() can hang forever and the app stays
-    // stuck on "Loading…". Race against a 5s timeout and force a fresh flow.
     let cancelled = false;
-    let timeoutId: ReturnType<typeof setTimeout> | null = null;
 
-    const recoverFromStaleSession = () => {
-      console.warn(
-        "Auth getSession timed out — clearing stale Supabase localStorage and reloading.",
-      );
-      try {
-        for (const key of Object.keys(localStorage)) {
-          if (key.startsWith("sb-")) {
-            localStorage.removeItem(key);
-          }
-        }
-      } catch {
-        // localStorage might be disabled (private browsing, etc.) — fall through
-      }
-      window.location.reload();
-    };
-
-    timeoutId = setTimeout(() => {
+    // Safety timeout: if getSession() never resolves (extremely rare), we don't
+    // want the app stuck on "Loading…" forever. After 15s we set loading=false
+    // and treat the user as signed out. We do NOT wipe localStorage — the
+    // stored session might be perfectly valid and would survive a manual
+    // refresh.
+    const timeoutId = setTimeout(() => {
       if (cancelled) return;
-      recoverFromStaleSession();
-    }, 5000);
+      console.warn(
+        "Auth getSession exceeded 15s timeout. Treating as signed-out for now; stored session preserved.",
+      );
+      setSession(null);
+      setLoading(false);
+    }, GET_SESSION_TIMEOUT_MS);
 
     supabase.auth
       .getSession()
       .then(async ({ data }) => {
         if (cancelled) return;
-        if (timeoutId) clearTimeout(timeoutId);
+        clearTimeout(timeoutId);
 
         if (data.session?.user) {
           const loaded = await loadContact(data.session.user.id);
@@ -163,7 +159,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       })
       .catch((err) => {
         if (cancelled) return;
-        if (timeoutId) clearTimeout(timeoutId);
+        clearTimeout(timeoutId);
         console.error("Auth getSession failed:", err);
         setSession(null);
         setLoading(false);
@@ -210,7 +206,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     return () => {
       cancelled = true;
-      if (timeoutId) clearTimeout(timeoutId);
+      clearTimeout(timeoutId);
       subscription.unsubscribe();
     };
   }, []);
