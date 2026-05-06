@@ -34,6 +34,19 @@ type AuthContextValue = {
 
 const AuthContext = createContext<AuthContextValue | undefined>(undefined);
 
+/**
+ * Routes where the access gate must NOT run.
+ *
+ * /accept-invitation and /accept-invitation/finish handle their own auth
+ * logic — they need a brief authenticated window to write contacts.auth_user_id
+ * and invitations.accepted_at before the access gate fires. If the gate runs
+ * on these routes, it races the acceptance flow and signs the user out before
+ * acceptance completes (which is what bit Maggy on May 5).
+ */
+function isAcceptanceRoute(pathname: string) {
+  return pathname.startsWith("/accept-invitation");
+}
+
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [session, setSession] = useState<Session | null>(null);
   const [contact, setContact] = useState<Contact | null>(null);
@@ -57,8 +70,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   // Access gate (#25): a signed-in user is allowed if EITHER:
   //   - they have a contact row (loaded above), OR
   //   - their email has an accepted, unrevoked invitation.
-  // If neither, sign them out and flag accessDenied so the login page can
-  // show the "not invited" banner.
   async function checkAccessByInvitation(email: string): Promise<boolean> {
     const normalized = email.toLowerCase().trim();
     const { data, error } = await supabase
@@ -123,18 +134,26 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
         if (data.session?.user) {
           const loaded = await loadContact(data.session.user.id);
-          const { allowed } = await enforceAccessGate(data.session.user, loaded);
-          if (cancelled) return;
 
-          if (allowed) {
+          // Skip the access gate on acceptance routes — those pages
+          // need a brief authenticated window to finalize the invitation.
+          if (isAcceptanceRoute(window.location.pathname)) {
+            if (cancelled) return;
             setSession(data.session);
             setContact(loaded);
           } else {
-            // Not invited. Sign out and flag for the login banner.
-            await supabase.auth.signOut();
-            setSession(null);
-            setContact(null);
-            setAccessDenied(true);
+            const { allowed } = await enforceAccessGate(data.session.user, loaded);
+            if (cancelled) return;
+
+            if (allowed) {
+              setSession(data.session);
+              setContact(loaded);
+            } else {
+              await supabase.auth.signOut();
+              setSession(null);
+              setContact(null);
+              setAccessDenied(true);
+            }
           }
         } else {
           setSession(null);
@@ -158,6 +177,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
       if (newSession?.user) {
         const loaded = await loadContact(newSession.user.id);
+
+        // Same bypass on acceptance routes (this is the case that bit Maggy:
+        // Google OAuth callback → onAuthStateChange fires → gate raced
+        // FinishInvitationPage and signed her out before it could complete).
+        if (isAcceptanceRoute(window.location.pathname)) {
+          if (cancelled) return;
+          setSession(newSession);
+          setContact(loaded);
+          setAccessDenied(false);
+          return;
+        }
+
         const { allowed } = await enforceAccessGate(newSession.user, loaded);
         if (cancelled) return;
 
