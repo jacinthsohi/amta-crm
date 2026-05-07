@@ -28,6 +28,9 @@ import { createClient } from "@supabase/supabase-js";
  *     display.
  *   - Two Supabase clients (anon for JWT verify, service-role for data fetch)
  *     same as /api/contact-summary.
+ *   - Defensive output coercion: even with forced tool use, Claude sometimes
+ *     returns a string for an array field (e.g. a "\n- "-joined string instead
+ *     of a JSON array). We coerce these to arrays rather than 502'ing.
  */
 
 export const config = {
@@ -71,7 +74,7 @@ function getServiceClient() {
 const SUBMIT_BRIEF_TOOL = {
   name: "submit_brief",
   description:
-    "Submit the structured meeting prep brief. Call this exactly once with all sections filled in.",
+    "Submit the structured meeting prep brief. Call this exactly once with all sections filled in. Each list field MUST be a JSON array of strings, never a single newline-joined string.",
   input_schema: {
     type: "object",
     properties: {
@@ -88,19 +91,19 @@ const SUBMIT_BRIEF_TOOL = {
       recent_activity: {
         type: "array",
         description:
-          "3-5 bullet points of concrete recent activity from the data: interactions, events, committee work, tasks. Most recent first. Each bullet is one factual sentence.",
+          "JSON array of 3-5 short bullet strings of concrete recent activity from the data: interactions, events, committee work, tasks. Most recent first. MUST be an array of separate strings, NOT a single newline-joined string.",
         items: { type: "string" },
       },
       open_threads: {
         type: "array",
         description:
-          "Open items that may come up: unfinished tasks, recent unresolved interactions, things the contact has flagged. Empty array if none.",
+          "JSON array of open items that may come up: unfinished tasks, recent unresolved interactions, things the contact has flagged. Empty array [] if none. MUST be an array of separate strings.",
         items: { type: "string" },
       },
       talking_points: {
         type: "array",
         description:
-          "3-5 suggested topics for the meeting. Should be informed by the data and (if provided) the meeting context. Phrased as things to ask or raise, not statements.",
+          "JSON array of 3-5 suggested topics for the meeting. Should be informed by the data and (if provided) the meeting context. Phrased as things to ask or raise, not statements. MUST be an array of separate strings.",
         items: { type: "string" },
       },
     },
@@ -216,20 +219,15 @@ export default async function handler(request: Request): Promise<Response> {
     );
   }
 
-  const brief = toolUseBlock.input as MeetingBrief;
-
-  // Defensive: validate shape (Claude usually nails this with forced tools,
-  // but better to surface a clear error than silently render garbage)
-  if (
-    typeof brief.who_they_are !== "string" ||
-    typeof brief.your_history !== "string" ||
-    !Array.isArray(brief.recent_activity) ||
-    !Array.isArray(brief.open_threads) ||
-    !Array.isArray(brief.talking_points)
-  ) {
+  // Coerce + validate Claude's output. Claude is usually compliant with the
+  // schema, but sometimes returns a string where an array is expected (e.g.
+  // "\n- item one\n- item two" instead of ["item one","item two"]). Rather
+  // than 502'ing, we coerce strings to arrays.
+  const brief = coerceToBrief(toolUseBlock.input);
+  if (!brief) {
     return jsonError(
       502,
-      `Brief shape invalid: ${JSON.stringify(brief).slice(0, 500)}`,
+      `Brief shape invalid even after coercion: ${JSON.stringify(toolUseBlock.input).slice(0, 500)}`,
     );
   }
 
@@ -256,6 +254,61 @@ export default async function handler(request: Request): Promise<Response> {
 }
 
 // -----------------------------------------------------------------------------
+// Output coercion — handle Claude returning string-where-array-expected
+// -----------------------------------------------------------------------------
+
+/**
+ * Convert any value to a clean string[]. Handles:
+ *   - already-an-array of strings → trim each, drop empties
+ *   - a single string with "\n- "/"\n* "/etc bullets → split + clean
+ *   - a single string of paragraphs separated by blank lines → split + clean
+ *   - a single non-bullet string → wrap in [string]
+ *   - anything else → []
+ */
+function toStringArray(raw: unknown): string[] {
+  if (Array.isArray(raw)) {
+    return raw
+      .map((x) => (typeof x === "string" ? x.trim() : String(x).trim()))
+      .filter((s) => s.length > 0);
+  }
+  if (typeof raw !== "string") return [];
+
+  const s = raw.trim();
+  if (s.length === 0) return [];
+
+  // Split on newlines if there are any. Then strip leading bullet markers
+  // ("- ", "* ", "• ", "1. ", etc).
+  const lines = s.split(/\r?\n/);
+  if (lines.length > 1) {
+    return lines
+      .map((line) => line.replace(/^\s*([-*•]|\d+\.)\s+/, "").trim())
+      .filter((line) => line.length > 0);
+  }
+
+  // Single string, no newlines → one item.
+  return [s];
+}
+
+function coerceToBrief(raw: unknown): MeetingBrief | null {
+  if (!raw || typeof raw !== "object") return null;
+  const r = raw as Record<string, unknown>;
+
+  const who_they_are = typeof r.who_they_are === "string" ? r.who_they_are : "";
+  const your_history = typeof r.your_history === "string" ? r.your_history : "";
+
+  // who_they_are and your_history are always required strings.
+  if (!who_they_are || !your_history) return null;
+
+  return {
+    who_they_are,
+    your_history,
+    recent_activity: toStringArray(r.recent_activity),
+    open_threads: toStringArray(r.open_threads),
+    talking_points: toStringArray(r.talking_points),
+  };
+}
+
+// -----------------------------------------------------------------------------
 // System prompt
 // -----------------------------------------------------------------------------
 
@@ -277,20 +330,25 @@ Call the submit_brief tool exactly once with these sections:
   shared history, say plainly: "No notable shared history yet — this may be \
   a first substantive meeting."
 
-- recent_activity: 3-5 bullets, most recent first. Pull from the actual \
-  interactions, events, and tasks in the data. Each bullet is ONE factual \
-  sentence. Include dates where available. Don't invent.
+- recent_activity: A JSON ARRAY of 3-5 short strings, most recent first. \
+  Pull from the actual interactions, events, and tasks in the data. Each \
+  array item is ONE factual sentence. Include dates where available. Don't \
+  invent. CRITICAL: this is an array of separate strings, NOT one string \
+  with newlines. Example: ["Met about budget on 2026-04-12", "Attended \
+  Spring Board Meeting on 2026-03-08"].
 
-- open_threads: ONLY items that genuinely need follow-up — open tasks \
-  involving them, unresolved questions from recent interactions, things they \
-  flagged. Empty array if there are none. Don't pad.
+- open_threads: A JSON ARRAY of strings — items that genuinely need \
+  follow-up. Open tasks involving them, unresolved questions from recent \
+  interactions, things they flagged. Empty array [] if none. Don't pad. \
+  CRITICAL: array of separate strings.
 
-- talking_points: 3-5 suggested topics for the meeting. These should be \
-  informed by the data AND, if provided, the specific meeting_context. \
-  Phrase as questions or topics to raise, not as statements. If the meeting \
-  context mentions a specific topic (budget, recruiting, etc.), the talking \
-  points should center on that topic. If no context is given, draw from \
-  recent activity and open threads.
+- talking_points: A JSON ARRAY of 3-5 strings — topics for the meeting. \
+  These should be informed by the data AND, if provided, the specific \
+  meeting_context. Phrase as questions or topics to raise, not as \
+  statements. If the meeting context mentions a specific topic (budget, \
+  recruiting, etc.), the talking points should center on that topic. If no \
+  context is given, draw from recent activity and open threads. CRITICAL: \
+  array of separate strings.
 
 CRITICAL RULES:
 - Never invent facts. If the data is sparse, the brief should be sparse.
@@ -298,7 +356,10 @@ CRITICAL RULES:
 - Use the contact's first name in talking_points (more natural for a meeting).
 - Don't include their email/phone — those are visible elsewhere on the page.
 - If meeting_context is null, generate a general-purpose brief without \
-  pretending you have specific topic context.`;
+  pretending you have specific topic context.
+- For ALL list fields (recent_activity, open_threads, talking_points): \
+  return a JSON array of strings like ["item 1", "item 2"]. Do NOT return \
+  a single string with "\\n-" separators.`;
 
 // -----------------------------------------------------------------------------
 // Data fetching — pull broad relational data for the brief
