@@ -364,6 +364,7 @@ export type Database = {
           notes: string | null
           phone: string | null
           profile_photo_url: string | null
+          pronouns: string | null
           standing: string | null
           updated_at: string
         }
@@ -382,6 +383,7 @@ export type Database = {
           notes?: string | null
           phone?: string | null
           profile_photo_url?: string | null
+          pronouns?: string | null
           standing?: string | null
           updated_at?: string
         }
@@ -400,6 +402,7 @@ export type Database = {
           notes?: string | null
           phone?: string | null
           profile_photo_url?: string | null
+          pronouns?: string | null
           standing?: string | null
           updated_at?: string
         }
@@ -1706,6 +1709,7 @@ export type Database = {
           notes: string | null
           phone: string | null
           profile_photo_url: string | null
+          pronouns: string | null
           standing: string | null
           updated_at: string | null
         }
@@ -1724,6 +1728,7 @@ export type Database = {
           notes?: string | null
           phone?: string | null
           profile_photo_url?: string | null
+          pronouns?: string | null
           standing?: string | null
           updated_at?: string | null
         }
@@ -1742,6 +1747,7 @@ export type Database = {
           notes?: string | null
           phone?: string | null
           profile_photo_url?: string | null
+          pronouns?: string | null
           standing?: string | null
           updated_at?: string | null
         }

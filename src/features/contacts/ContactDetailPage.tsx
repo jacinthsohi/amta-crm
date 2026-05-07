@@ -41,6 +41,7 @@ import { TaskForm } from "@/features/tasks/TaskForm";
 import { InteractionForm } from "@/features/interactions/InteractionForm";
 import type { Task } from "@/lib/database.types";
 import { AISummary } from "./AISummary";
+import { MeetingBrief } from "./MeetingBrief";
 
 function isCurrentBoard(c: { category_names: string[] }): boolean {
   return c.category_names.includes("Current Board Member");
@@ -97,11 +98,16 @@ export default function ContactDetailPage() {
         <Hero contact={contact} onEdit={() => setEditOpen(true)} />
 
         {/* AI summary — generated on demand, cached on the contact row */}
-        <div className="px-8 pt-1 pb-3">
+        {/* Meeting brief — always fresh, structured output */}
+        <div className="px-8 pt-1 pb-2 space-y-3">
           <AISummary
             contactId={contact.id}
             cachedSummary={contact.ai_summary}
             cachedGeneratedAt={contact.ai_summary_generated_at}
+          />
+          <MeetingBrief
+            contactId={contact.id}
+            contactFirstName={contact.first_name}
           />
         </div>
 
