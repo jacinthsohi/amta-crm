@@ -7,6 +7,8 @@ import { Avatar } from "@/components/Avatar";
 import { Tag } from "@/components/Tag";
 import { LoadingState, ErrorState, EmptyState } from "@/components/states";
 import { PrimaryButton } from "@/components/Buttons";
+import { ExportCsvButton } from "@/components/ExportCsvButton";
+import type { CsvColumnDef } from "@/lib/csv";
 import { useProgramAffiliationsByContact } from "./hooks-affiliations";
 import { ContactForm } from "./ContactForm";
 
@@ -23,6 +25,49 @@ const FILTERS: { id: FilterId; label: string }[] = [
 
 function isCurrentBoard(c: ContactWithCategories): boolean {
   return c.category_names.includes("Current Board Member");
+}
+
+// =============================================================================
+// CSV columns. Order here is the order they appear in the picker AND in the
+// exported CSV. `defaultSelectedKeys` below picks which are checked initially.
+// =============================================================================
+const CONTACT_EXPORT_COLUMNS: CsvColumnDef<ContactWithCategories>[] = [
+  { key: "first_name", label: "First Name", value: (c) => c.first_name },
+  { key: "last_name", label: "Last Name", value: (c) => c.last_name },
+  { key: "pronouns", label: "Pronouns", value: (c) => c.pronouns },
+  { key: "email", label: "Email", value: (c) => c.email },
+  { key: "phone", label: "Phone", value: (c) => c.phone },
+  { key: "categories", label: "Categories", value: (c) => c.category_names },
+  { key: "standing", label: "Board Standing", value: (c) => c.standing },
+  { key: "has_board_history", label: "Has Board History", value: (c) => c.has_board_history ? "Yes" : "No" },
+  { key: "notes", label: "Notes (HTML stripped)", value: (c) => stripHtml(c.notes) },
+  { key: "ai_summary", label: "AI Summary", value: (c) => c.ai_summary },
+  { key: "ai_summary_generated_at", label: "AI Summary Generated", value: (c) => formatDate(c.ai_summary_generated_at) },
+  { key: "id", label: "Contact ID", value: (c) => c.id },
+  { key: "created_at", label: "Created At", value: (c) => formatDate(c.created_at) },
+  { key: "updated_at", label: "Last Updated", value: (c) => formatDate(c.updated_at) },
+];
+
+// Default columns — the most common ones for mail merge / sharing
+const CONTACT_DEFAULT_KEYS = [
+  "first_name",
+  "last_name",
+  "pronouns",
+  "email",
+  "phone",
+  "categories",
+];
+
+function stripHtml(html: string | null | undefined): string {
+  if (!html) return "";
+  // Strip tags, collapse whitespace. Good enough for export — original is
+  // preserved in the DB for the in-app rich display.
+  return html.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
+}
+
+function formatDate(iso: string | null | undefined): string {
+  if (!iso) return "";
+  return new Date(iso).toISOString().slice(0, 10); // YYYY-MM-DD
 }
 
 export default function ContactsListPage() {
@@ -71,12 +116,21 @@ export default function ContactsListPage() {
               Board members, alumni, coaches, donors, and volunteers.
             </p>
           </div>
-          <PrimaryButton onClick={() => setFormOpen(true)}>
-            <span className="inline-flex items-center gap-1.5">
-              <Plus size={14} />
-              New contact
-            </span>
-          </PrimaryButton>
+          <div className="flex items-center gap-2">
+            <ExportCsvButton
+              rows={filtered}
+              columns={CONTACT_EXPORT_COLUMNS}
+              filenamePrefix="amta-contacts"
+              defaultSelectedKeys={CONTACT_DEFAULT_KEYS}
+              disabled={isLoading}
+            />
+            <PrimaryButton onClick={() => setFormOpen(true)}>
+              <span className="inline-flex items-center gap-1.5">
+                <Plus size={14} />
+                New contact
+              </span>
+            </PrimaryButton>
+          </div>
         </div>
 
         <div className="flex items-center gap-3">

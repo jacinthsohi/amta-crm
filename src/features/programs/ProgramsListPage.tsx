@@ -5,6 +5,8 @@ import { usePrograms } from "./hooks";
 import { Tag } from "@/components/Tag";
 import { LoadingState, ErrorState, EmptyState } from "@/components/states";
 import { PrimaryButton } from "@/components/Buttons";
+import { ExportCsvButton } from "@/components/ExportCsvButton";
+import type { CsvColumnDef } from "@/lib/csv";
 import { ProgramForm } from "./ProgramForm";
 import type { Program } from "@/lib/database.types";
 
@@ -15,6 +17,37 @@ const FILTERS: { id: FilterId; label: string }[] = [
   { id: "active", label: "Active" },
   { id: "inactive", label: "Inactive" },
 ];
+
+// =============================================================================
+// CSV columns
+// =============================================================================
+const PROGRAM_EXPORT_COLUMNS: CsvColumnDef<Program>[] = [
+  { key: "name", label: "Name", value: (p) => p.name },
+  { key: "short_name", label: "Short Name", value: (p) => p.short_name },
+  { key: "city", label: "City", value: (p) => p.city },
+  { key: "state", label: "State", value: (p) => p.state },
+  { key: "website", label: "Website", value: (p) => p.website },
+  { key: "joined_year", label: "Joined Year", value: (p) => p.joined_year },
+  { key: "status", label: "Status", value: (p) => p.status },
+  { key: "id", label: "Program ID", value: (p) => p.id },
+  { key: "created_at", label: "Created At", value: (p) => formatDate(p.created_at) },
+  { key: "updated_at", label: "Last Updated", value: (p) => formatDate(p.updated_at) },
+];
+
+const PROGRAM_DEFAULT_KEYS = [
+  "name",
+  "short_name",
+  "city",
+  "state",
+  "website",
+  "joined_year",
+  "status",
+];
+
+function formatDate(iso: string | null | undefined): string {
+  if (!iso) return "";
+  return new Date(iso).toISOString().slice(0, 10);
+}
 
 export default function ProgramsListPage() {
   const navigate = useNavigate();
@@ -52,12 +85,21 @@ export default function ProgramsListPage() {
               Member institutions — schools that compete in AMTA tournaments.
             </p>
           </div>
-          <PrimaryButton onClick={() => setFormOpen(true)}>
-            <span className="inline-flex items-center gap-1.5">
-              <Plus size={14} />
-              New program
-            </span>
-          </PrimaryButton>
+          <div className="flex items-center gap-2">
+            <ExportCsvButton
+              rows={filtered}
+              columns={PROGRAM_EXPORT_COLUMNS}
+              filenamePrefix="amta-programs"
+              defaultSelectedKeys={PROGRAM_DEFAULT_KEYS}
+              disabled={isLoading}
+            />
+            <PrimaryButton onClick={() => setFormOpen(true)}>
+              <span className="inline-flex items-center gap-1.5">
+                <Plus size={14} />
+                New program
+              </span>
+            </PrimaryButton>
+          </div>
         </div>
 
         <div className="flex items-center gap-3">
