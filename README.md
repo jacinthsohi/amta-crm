@@ -100,7 +100,7 @@ What Claude brought: TypeScript fluency, knowledge of every library in the stack
 You'll need a Supabase project and an Anthropic API key.
 
 ```bash
-git clone https://github.com/jsohi11/amta-crm
+git clone https://github.com/jacinthsohi/amta-crm
 cd amta-crm
 npm install
 cp .env.example .env
@@ -130,4 +130,4 @@ Everything else in this repo is the actual code running in production at [crm.mo
 
 ## Contact
 
-Jacinth Sohi · [jacinthsohi@gmail.com](mailto:jacinthsohi@gmail.com) · [github.com/jsohi11](https://github.com/jsohi11)
+Jacinth Sohi · [jacinthsohi@gmail.com](mailto:jacinthsohi@gmail.com) · [github.com/jacinthsohi](https://github.com/jacinthsohi)
