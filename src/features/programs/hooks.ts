@@ -1,5 +1,10 @@
 import { useMemo } from "react";
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import {
+  useQuery,
+  useInfiniteQuery,
+  useMutation,
+  useQueryClient,
+} from "@tanstack/react-query";
 import { supabase } from "@/lib/supabase";
 import type {
   Program,
@@ -9,12 +14,86 @@ import type {
 
 const KEYS = {
   programs: ["programs"] as const,
+  programsInfinite: ["programs", "infinite"] as const,
+  programsAll: ["programs", "all"] as const,
   program: (id: string) => ["program", id] as const,
   programAffiliations: (id: string) => ["program-affiliations", id] as const,
 };
 
+// Page size for the paginated list. 50 is a comfortable batch — enough to feel
+// substantial, small enough to keep first-page render fast.
+export const PROGRAMS_PAGE_SIZE = 50;
+
 // =============================================================================
-// usePrograms — list query
+// useInfinitePrograms — paginated list query for the Programs page
+// =============================================================================
+// Uses cursor-based pagination on `name` (the displayed sort order). Each page
+// fetches PROGRAMS_PAGE_SIZE + 1 rows; the extra row is used to determine if
+// there's a next page without a separate count() query.
+//
+// We sort by name ASC because that's the user-facing display order, so cursor
+// pagination matches what the user sees.
+// =============================================================================
+export function useInfinitePrograms() {
+  return useInfiniteQuery<Program[], Error>({
+    queryKey: KEYS.programsInfinite,
+    queryFn: async ({ pageParam }) => {
+      let query = supabase
+        .from("active_programs")
+        .select("*")
+        .order("name", { ascending: true })
+        .limit(PROGRAMS_PAGE_SIZE + 1); // +1 to detect if there's a next page
+
+      // pageParam is the last name from the previous page — paginate after it
+      if (pageParam) {
+        query = query.gt("name", pageParam as string);
+      }
+
+      const { data, error } = await query;
+      if (error) throw error;
+      return data ?? [];
+    },
+    initialPageParam: null,
+    getNextPageParam: (lastPage) => {
+      // If we got back fewer than PAGE_SIZE+1, there's no next page
+      if (lastPage.length <= PROGRAMS_PAGE_SIZE) return undefined;
+      // Otherwise the last "real" item's name is the cursor for the next page
+      return lastPage[PROGRAMS_PAGE_SIZE - 1]?.name;
+    },
+  });
+}
+
+// =============================================================================
+// useAllPrograms — fetches every program in a single call
+// =============================================================================
+// Used in two cases:
+//   1. When the user is searching/filtering (we need all rows to search across)
+//   2. When the user clicks CSV export (export should include all rows, not
+//      just the currently-loaded paginated subset)
+//
+// `enabled` is controlled by the caller so this only fires when needed.
+// =============================================================================
+export function useAllPrograms(enabled: boolean) {
+  return useQuery<Program[]>({
+    queryKey: KEYS.programsAll,
+    enabled,
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("active_programs")
+        .select("*")
+        .order("name");
+      if (error) throw error;
+      return data ?? [];
+    },
+  });
+}
+
+// =============================================================================
+// usePrograms — legacy lookup query (kept for compatibility with other features)
+// =============================================================================
+// Other parts of the app (ProgramSelector, etc.) still call this for
+// dropdown-style lookups. Keep it returning the full list so we don't break
+// anything else.
 // =============================================================================
 export function usePrograms() {
   return useQuery<Program[]>({
@@ -115,8 +194,9 @@ export function useUpsertProgram() {
     },
     onSuccess: (program) => {
       qc.invalidateQueries({ queryKey: KEYS.programs });
+      qc.invalidateQueries({ queryKey: KEYS.programsInfinite });
+      qc.invalidateQueries({ queryKey: KEYS.programsAll });
       qc.invalidateQueries({ queryKey: KEYS.program(program.id) });
-      // Also invalidate the cross-cutting lookup
       qc.invalidateQueries({ queryKey: ["programs-lookup"] });
     },
   });
@@ -138,6 +218,8 @@ export function useSoftDeleteProgram() {
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: KEYS.programs });
+      qc.invalidateQueries({ queryKey: KEYS.programsInfinite });
+      qc.invalidateQueries({ queryKey: KEYS.programsAll });
       qc.invalidateQueries({ queryKey: ["programs-lookup"] });
     },
   });
