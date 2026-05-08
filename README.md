@@ -4,6 +4,8 @@ A custom CRM built for the [American Mock Trial Association](https://collegemock
 
 I'm the President of AMTA, not a professional engineer. I built MVP functionality in 48-72 hours, then spent ~3 full-time-equivalent workdays over the next ~10 days iterating, bug-bashing, and adding the AI features. Throughout, I collaborated with Claude as a coding partner: I scoped, designed, debugged, and shipped; Claude wrote the bulk of the implementation under my direction. **The core thing I want to communicate with this repo is what's actually possible when a non-engineer operator with deep domain expertise and strong product instincts pairs with a capable AI model on real, shippable software.** Five production AI features, full database schema with row-level security, a board-only admin surface, OAuth, and 14 CRUD entities — all working, in production, used by real volunteers.
 
+![Home dashboard](docs/screenshots/01-home.png)
+
 ---
 
 ## What it is
@@ -22,6 +24,8 @@ Five production AI features, each demonstrating a different Anthropic API patter
 
 Click "Generate AI summary" on any contact. Claude streams a 2-3 sentence factual orientation ("Jacinth Sohi is the current AMTA President, also serving on the Executive and Budget committees…"). After streaming completes, the backend persists the summary to `contacts.ai_summary` so subsequent visits show the cached version with a "Regenerate" button. Streams are decoded chunk-by-chunk in the frontend for the typewriter effect.
 
+![AI summary on a contact detail page](docs/screenshots/04-contact-detail.png)
+
 ### 2. Agentic Q&A with Tool Use
 **Pattern:** multi-turn agentic loop with custom tool definitions
 **File:** [`api/ask.ts`](api/ask.ts)
@@ -35,19 +39,29 @@ A chat interface where you can ask questions like "Which alumni from California 
 
 The endpoint runs Claude in a multi-turn loop: Claude calls a tool → server executes the query → result is fed back → Claude reasons about whether it has enough to answer or needs another call. The response includes the final text, contact IDs that were referenced (so the UI can render contact cards), and a trace of the tool calls themselves for transparency. Conversation history is round-trippable via `full_messages` so the user can keep asking follow-ups.
 
+![Ask AI starting page with suggested queries](docs/screenshots/02-ask-ai.png)
+
+![Ask AI result with the research trace shown](docs/screenshots/03-ask-ai-result.png)
+
+The "Research trace" panel above shows Claude's actual tool calls in order — useful both for debugging and for users who want to understand how their answer was assembled.
+
 ### 3. Native PDF Extraction
 **Pattern:** structured output via tool use, with native PDF reading
 **File:** [`api/extract-event-pdf.ts`](api/extract-event-pdf.ts)
 
-AMTA receives free-form tournament packets and welcome documents from regional hosts every season. Drop one of these PDFs into the event creation flow and Claude reads it natively (vision + text — no OCR step) and extracts structured fields: tournament name, date, location, host school, etc. Each extracted field comes back with a per-field confidence score so the UI can highlight uncertain fields for manual review before save. The output pre-fills an event form, which the user reviews and saves.
+AMTA receives free-form tournament packets and welcome documents from regional hosts every season. Drop one of these PDFs into the event creation flow and Claude reads it natively (vision + text — no OCR step) and extracts structured fields: tournament name, date, location, host school, etc. Each extracted field comes back with a per-field confidence score so the UI can show a green checkmark for high-confidence fields and flag uncertain ones for manual review before save.
 
-The interesting bit is that we never run a separate text-extraction or OCR step — Claude handles the document end-to-end, which means it can correctly read scanned schedules, multi-column layouts, and tables that traditional PDF parsers mangle.
+![PDF extraction loading state](docs/screenshots/08-pdf-extracting.png)
+
+![PDF extraction results review with checkmarks per field](docs/screenshots/09-pdf-review.png)
+
+The interesting bit is that we never run a separate text-extraction or OCR step — Claude handles the document end-to-end, which means it can correctly read scanned schedules, multi-column layouts, and tables that traditional PDF parsers mangle. The "AI notes" callout at the top explains how Claude arrived at its answer in plain English, which builds trust faster than just showing extracted fields would.
 
 ### 4. Meeting Prep Brief
 **Pattern:** structured JSON output via forced tool use, with multi-source synthesis
 **File:** [`api/meeting-brief.ts`](api/meeting-brief.ts)
 
-The newest feature. Click "Prep for meeting" on any contact, optionally type meeting context ("discussing committee chair transitions"), and the endpoint synthesizes a structured brief from across the entire database — officer history, committee work, the last 8 interactions (with notes excerpts), open tasks, and recently-staffed events. Returns five structured sections: who they are, your shared history, recent activity, open threads, and suggested talking points.
+Click "Prep for meeting" on any contact, optionally type meeting context ("discussing committee chair transitions"), and the endpoint synthesizes a structured brief from across the entire database — officer history, committee work, the last 8 interactions (with notes excerpts), open tasks, and recently-staffed events. Returns five structured sections: who they are, your shared history, recent activity, open threads, and suggested talking points.
 
 The notable engineering bit: even with forced tool choice, Claude occasionally returns a newline-joined string for an array field. The endpoint includes a defensive coercion layer (`coerceToBrief`) that handles this gracefully rather than 502'ing — caught when production output revealed Claude returning `"\n- Item 1\n- Item 2"` where I'd specified an array. Real LLM-engineering edge case worth documenting.
 
@@ -55,7 +69,21 @@ The notable engineering bit: even with forced tool choice, Claude occasionally r
 **Pattern:** lightweight async LLM call for UX polish
 **File:** [`api/ask-title.ts`](api/ask-title.ts)
 
-A small but meaningful feature: after a user asks a question in the Q&A interface and gets an answer, a separate async call to Claude generates a short 3-5 word title for the conversation, used to populate sidebar entries. Kept as a separate (cheaper) endpoint rather than baked into the main Ask flow so the user gets their answer first and the title fills in silently after. Small detail, real UX win.
+A small but meaningful feature: after a user asks a question in the Q&A interface and gets an answer, a separate async call to Claude generates a short 3-5 word title for the conversation, used to populate sidebar entries. Kept as a separate (cheaper) endpoint rather than baked into the main Ask flow so the user gets their answer first and the title fills in silently after. Small detail, real UX win — visible in the sidebar of screenshot #2 above ("Jacinth Sohi's Committee Positi...").
+
+---
+
+## A look around the rest of the app
+
+Beyond the AI features, the CRM has the usual surface area you'd expect — directories, detail pages, forms, filters. A few representative views:
+
+![Events list with status filtering](docs/screenshots/06-events-list.png)
+
+![Event detail with hosts, staff, and documents](docs/screenshots/07-event-detail.png)
+
+![Contact relationships: officer terms, committee assignments, program affiliations](docs/screenshots/05-contact-relationships.png)
+
+![Committees list with nested subcommittee structure](docs/screenshots/10-committees.png)
 
 ---
 
@@ -76,6 +104,9 @@ The `src/lib/database.generated.ts` file is regenerated from the live Supabase s
 
 ### Admin / invitation flow
 Board-only admin section at `/admin/invitations` lets the President invite new users by selecting an existing contact and generating a one-time acceptance link. The acceptance flow handles a tricky race: when the user signs in via Google OAuth, both the access gate and the acceptance page see them at the same time. Solved by skipping the gate on `/accept-invitation/*` routes so the acceptance page can finalize the invitation before any access check fires. See [`src/lib/auth.tsx`](src/lib/auth.tsx).
+
+### Cascading soft-delete
+When a program is soft-deleted, its `program_affiliations` are automatically soft-deleted too via a Postgres trigger. This avoids the "deleted program" placeholder rendering on contact pages whose affiliations point at a removed institution. See [`migrations/20260507_cascade_program_soft_delete.sql`](migrations/20260507_cascade_program_soft_delete.sql).
 
 ---
 
@@ -127,4 +158,3 @@ Everything else in this repo is the actual code running in production at [crm.mo
 ## License
 
 [MIT](LICENSE) — fork it, learn from it, run your own. If you're a similar nonprofit and this would be useful to you, I'd love to hear about it.
-
