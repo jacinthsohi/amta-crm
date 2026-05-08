@@ -1,11 +1,7 @@
 import { useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { Plus, Search, ChevronRight, ExternalLink } from "lucide-react";
-import {
-  useInfinitePrograms,
-  useAllPrograms,
-  PROGRAMS_PAGE_SIZE,
-} from "./hooks";
+import { usePrograms } from "./hooks";
 import { Tag } from "@/components/Tag";
 import { LoadingState, ErrorState, EmptyState } from "@/components/states";
 import { PrimaryButton } from "@/components/Buttons";
@@ -53,46 +49,17 @@ function formatDate(iso: string | null | undefined): string {
   return new Date(iso).toISOString().slice(0, 10);
 }
 
-// =============================================================================
-// Page
-// =============================================================================
 export default function ProgramsListPage() {
   const navigate = useNavigate();
+  const { data: programs, isLoading, error, refetch } = usePrograms();
 
   const [filter, setFilter] = useState<FilterId>("all");
   const [query, setQuery] = useState("");
   const [formOpen, setFormOpen] = useState(false);
 
-  // The user is "actively narrowing" if they have search text or a non-default
-  // filter applied. In that mode we need ALL programs loaded so the filter
-  // searches across the whole dataset — paginated browsing is only for the
-  // unfiltered "show me all programs" case.
-  const isNarrowing = filter !== "all" || query.trim().length > 0;
-
-  // Two queries running in parallel:
-  // - Infinite query for the default browse experience (paginated)
-  // - All-rows query that activates only when we need it (narrowing OR exporting)
-  const infinite = useInfinitePrograms();
-  const all = useAllPrograms(isNarrowing);
-
-  const isLoading = isNarrowing ? all.isLoading : infinite.isLoading;
-  const error = isNarrowing ? all.error : infinite.error;
-  const refetch = isNarrowing ? all.refetch : infinite.refetch;
-
-  // Flatten paginated pages into a single list, capping each page at PAGE_SIZE
-  // (each fetched page actually has PAGE_SIZE+1 rows; the +1 is just a peek for
-  // the next-page detection logic).
-  const paginatedRows: Program[] = useMemo(() => {
-    if (!infinite.data) return [];
-    return infinite.data.pages.flatMap((page) =>
-      page.slice(0, PROGRAMS_PAGE_SIZE),
-    );
-  }, [infinite.data]);
-
-  const sourceRows: Program[] = isNarrowing ? all.data ?? [] : paginatedRows;
-
   const filtered = useMemo(() => {
-    let result = sourceRows;
+    if (!programs) return [];
+    let result = programs;
     if (filter !== "all") result = result.filter((p) => p.status === filter);
     if (query.trim()) {
       const q = query.toLowerCase();
@@ -104,13 +71,7 @@ export default function ProgramsListPage() {
       );
     }
     return result;
-  }, [sourceRows, filter, query]);
-
-  // For export: use the all-rows result if we have it; otherwise fall back to
-  // the paginated rows. The button below also asks the all-rows query to run
-  // when exporting so we always get the complete set.
-  const exportRows = all.data ?? filtered;
-  const exportPending = all.isFetching && !all.data;
+  }, [programs, filter, query]);
 
   return (
     <div className="flex flex-col h-screen overflow-hidden">
@@ -126,11 +87,11 @@ export default function ProgramsListPage() {
           </div>
           <div className="flex items-center gap-2">
             <ExportCsvButton
-              rows={exportRows}
+              rows={filtered}
               columns={PROGRAM_EXPORT_COLUMNS}
               filenamePrefix="amta-programs"
               defaultSelectedKeys={PROGRAM_DEFAULT_KEYS}
-              disabled={isLoading || exportPending}
+              disabled={isLoading}
             />
             <PrimaryButton onClick={() => setFormOpen(true)}>
               <span className="inline-flex items-center gap-1.5">
@@ -179,33 +140,10 @@ export default function ProgramsListPage() {
         ) : error ? (
           <ErrorState error={error} onRetry={() => refetch()} />
         ) : (
-          <>
-            <ProgramsTable
-              rows={filtered}
-              onSelect={(id) => navigate(`/programs/${id}`)}
-            />
-
-            {/* Load-more footer — only shown when in browse mode (no filter/search) */}
-            {!isNarrowing && (
-              <div className="px-8 py-5 flex flex-col items-center gap-2 border-t border-zinc-100">
-                {infinite.hasNextPage ? (
-                  <button
-                    onClick={() => infinite.fetchNextPage()}
-                    disabled={infinite.isFetchingNextPage}
-                    className="px-4 py-1.5 rounded-md text-xs font-medium border border-zinc-200 text-zinc-700 hover:bg-zinc-50 disabled:opacity-60 disabled:cursor-not-allowed transition-colors"
-                  >
-                    {infinite.isFetchingNextPage
-                      ? "Loading…"
-                      : `Load more (${paginatedRows.length} loaded)`}
-                  </button>
-                ) : paginatedRows.length > 0 ? (
-                  <span className="text-xs text-zinc-400">
-                    All {paginatedRows.length} programs loaded
-                  </span>
-                ) : null}
-              </div>
-            )}
-          </>
+          <ProgramsTable
+            rows={filtered}
+            onSelect={(id) => navigate(`/programs/${id}`)}
+          />
         )}
       </div>
 
