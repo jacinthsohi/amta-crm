@@ -49,9 +49,11 @@ export function Sidebar({ onSearch }: { onSearch: () => void }) {
     >
       {/* Brand */}
       <div className="px-4 pt-5 pb-4 flex items-center gap-2.5">
-        <div className="w-7 h-7 rounded-md bg-maroon-50 border border-maroon-100 flex items-center justify-center">
-          <span className="text-maroon-700 text-sm font-bold">A</span>
-        </div>
+        <img
+          src="/amta-logo.png"
+          alt="AMTA"
+          className="w-7 h-7"
+        />
         <div className="flex flex-col leading-tight">
           <span className="text-[13px] font-semibold text-zinc-900">AMTA</span>
           <span className="text-[10.5px] text-zinc-500 tracking-wide">
