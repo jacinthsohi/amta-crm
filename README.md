@@ -128,6 +128,3 @@ Everything else in this repo is the actual code running in production at [crm.mo
 
 [MIT](LICENSE) — fork it, learn from it, run your own. If you're a similar nonprofit and this would be useful to you, I'd love to hear about it.
 
-## Contact
-
-Jacinth Sohi · [jacinthsohi@gmail.com](mailto:jacinthsohi@gmail.com) · [github.com/jacinthsohi](https://github.com/jacinthsohi)
