@@ -56,9 +56,11 @@ export default function LoginPage() {
       <div className="w-full max-w-sm">
         {/* Brand */}
         <div className="text-center mb-8">
-          <div className="inline-flex items-center justify-center w-12 h-12 rounded-xl mb-3 bg-maroon-50 border border-maroon-100">
-            <span className="text-maroon-700 text-lg font-bold">A</span>
-          </div>
+          <img
+            src="/amta-logo.png"
+            alt="American Mock Trial Association"
+            className="w-16 h-16 mx-auto mb-3"
+          />
           <h1 className="text-xl font-semibold text-zinc-900">AMTA CRM</h1>
           <p className="text-sm text-zinc-500 mt-1">Sign in to continue</p>
         </div>

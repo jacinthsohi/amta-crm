@@ -21,9 +21,11 @@ export default function LandingPage() {
       <header className="border-b border-zinc-100">
         <div className="max-w-5xl mx-auto px-6 py-4 flex items-center justify-between">
           <div className="flex items-center gap-2.5">
-            <div className="inline-flex items-center justify-center w-8 h-8 rounded-md bg-maroon-50 border border-maroon-100">
-              <span className="text-maroon-700 text-sm font-bold">A</span>
-            </div>
+            <img
+              src="/amta-logo.png"
+              alt="AMTA"
+              className="w-8 h-8"
+            />
             <div>
               <div className="text-sm font-semibold text-zinc-900 leading-tight">AMTA CRM</div>
               <div className="text-[11px] text-zinc-500 leading-tight">Internal tool</div>
@@ -41,6 +43,11 @@ export default function LandingPage() {
       {/* Hero */}
       <main className="max-w-5xl mx-auto px-6 pt-16 pb-12">
         <div className="max-w-2xl">
+          <img
+            src="/amta-logo.png"
+            alt="American Mock Trial Association"
+            className="w-20 h-20 mb-6"
+          />
           <h1 className="text-4xl font-semibold tracking-tight text-zinc-900 mb-4">
             The internal CRM for the American Mock Trial Association.
           </h1>
