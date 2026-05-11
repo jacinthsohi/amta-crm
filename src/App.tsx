@@ -8,6 +8,7 @@ import { queryClient } from "@/lib/query-client";
 import LoginPage from "@/features/auth/LoginPage";
 import AcceptInvitationPage from "@/features/auth/AcceptInvitationPage";
 import FinishInvitationPage from "@/features/auth/FinishInvitationPage";
+import AlumniSignupPage from "@/features/auth/AlumniSignupPage";
 import { RequireAuth } from "@/features/auth/RequireAuth";
 
 import PrivacyPage from "@/features/legal/PrivacyPage";
@@ -83,6 +84,7 @@ export default function App() {
               path="/accept-invitation/finish"
               element={<FinishInvitationPage />}
             />
+            <Route path="/alumni-signup" element={<AlumniSignupPage />} />
             <Route path="/privacy" element={<PrivacyPage />} />
 
             {/* Private — share the AppLayout shell */}

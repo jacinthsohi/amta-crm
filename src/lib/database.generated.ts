@@ -95,6 +95,103 @@ export type Database = {
           },
         ]
       }
+      alumni_claims: {
+        Row: {
+          contact_id: string | null
+          created_at: string
+          email: string
+          first_name: string
+          graduation_year: number
+          id: string
+          last_name: string
+          notes: string | null
+          phone: string | null
+          program_id: string
+          review_notes: string | null
+          reviewed_at: string | null
+          reviewed_by: string | null
+          status: string
+          updated_at: string
+        }
+        Insert: {
+          contact_id?: string | null
+          created_at?: string
+          email: string
+          first_name: string
+          graduation_year: number
+          id?: string
+          last_name: string
+          notes?: string | null
+          phone?: string | null
+          program_id: string
+          review_notes?: string | null
+          reviewed_at?: string | null
+          reviewed_by?: string | null
+          status?: string
+          updated_at?: string
+        }
+        Update: {
+          contact_id?: string | null
+          created_at?: string
+          email?: string
+          first_name?: string
+          graduation_year?: number
+          id?: string
+          last_name?: string
+          notes?: string | null
+          phone?: string | null
+          program_id?: string
+          review_notes?: string | null
+          reviewed_at?: string | null
+          reviewed_by?: string | null
+          status?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "alumni_claims_contact_id_fkey"
+            columns: ["contact_id"]
+            isOneToOne: false
+            referencedRelation: "active_contacts"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "alumni_claims_contact_id_fkey"
+            columns: ["contact_id"]
+            isOneToOne: false
+            referencedRelation: "contacts"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "alumni_claims_program_id_fkey"
+            columns: ["program_id"]
+            isOneToOne: false
+            referencedRelation: "active_programs"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "alumni_claims_program_id_fkey"
+            columns: ["program_id"]
+            isOneToOne: false
+            referencedRelation: "programs"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "alumni_claims_reviewed_by_fkey"
+            columns: ["reviewed_by"]
+            isOneToOne: false
+            referencedRelation: "active_contacts"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "alumni_claims_reviewed_by_fkey"
+            columns: ["reviewed_by"]
+            isOneToOne: false
+            referencedRelation: "contacts"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       board_terms: {
         Row: {
           contact_id: string
