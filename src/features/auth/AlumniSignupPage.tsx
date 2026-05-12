@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { Link } from "react-router-dom";
 import { supabase } from "@/lib/supabase";
+import { useAuth } from "@/lib/auth";
 import type { Program } from "@/lib/database.types";
 
 /**
@@ -16,8 +17,17 @@ import type { Program } from "@/lib/database.types";
  * Anti-spam: a honeypot field named `website` is included as a hidden input.
  * Bots that auto-fill every form field will fill it; humans won't see it.
  * Submissions with a non-empty honeypot are silently dropped.
+ *
+ * Signed-in user handling: the alumni_claims INSERT policy applies only to
+ * the `anon` role. If a signed-in admin lands on this page, the policy will
+ * reject their submission with a 403. Rather than loosening the policy (and
+ * encouraging admins to use this form when they should be using /contacts),
+ * we detect auth here and show a redirect message with an option to sign out
+ * and continue if they really do want to submit the form for someone else.
  */
 export default function AlumniSignupPage() {
+  const { session, signOut } = useAuth();
+
   const [programs, setPrograms] = useState<Program[] | null>(null);
   const [loadingPrograms, setLoadingPrograms] = useState(true);
   const [programError, setProgramError] = useState<string | null>(null);
@@ -37,8 +47,13 @@ export default function AlumniSignupPage() {
   const [submitted, setSubmitted] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // Load programs for the dropdown.
+  // Load programs for the dropdown. Skip the fetch when signed in — we're
+  // rendering the signed-in redirect view instead and don't need the list.
   useEffect(() => {
+    if (session) {
+      setLoadingPrograms(false);
+      return;
+    }
     let cancelled = false;
     (async () => {
       try {
@@ -62,7 +77,56 @@ export default function AlumniSignupPage() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [session]);
+
+  // -----------------------------------------------------------------------
+  // Signed-in redirect view
+  // -----------------------------------------------------------------------
+  // Rendered when an authenticated user lands on the public form. The RLS
+  // policy on alumni_claims only permits inserts by the `anon` role, so a
+  // submission from a signed-in user would 403. Surface the situation
+  // clearly instead of letting them hit the error.
+  // -----------------------------------------------------------------------
+  if (session) {
+    return (
+      <div className="min-h-screen bg-zinc-50 flex items-center justify-center px-4 py-8">
+        <div className="w-full max-w-md bg-white rounded-lg border border-zinc-200 p-8 shadow-sm">
+          <h1 className="text-xl font-semibold text-zinc-900">
+            You're already signed in
+          </h1>
+          <p className="mt-3 text-sm text-zinc-600">
+            This form is for alumni who don't yet have a CRM account. As an
+            admin, the fastest way to add someone new is the contacts page —
+            you can create their record directly without going through the
+            review queue.
+          </p>
+          <div className="mt-6 flex flex-col gap-2">
+            <Link
+              to="/contacts"
+              className="block w-full rounded-md bg-maroon-700 px-4 py-2 text-center text-sm font-medium text-white hover:bg-maroon-800"
+            >
+              Go to contacts
+            </Link>
+            <button
+              type="button"
+              onClick={async () => {
+                await signOut();
+              }}
+              className="block w-full rounded-md border border-zinc-300 px-4 py-2 text-center text-sm font-medium text-zinc-700 hover:bg-zinc-50"
+            >
+              Sign out and use this form
+            </button>
+            <Link
+              to="/"
+              className="mt-2 block text-center text-xs text-zinc-500 hover:text-zinc-700"
+            >
+              ← Back to home
+            </Link>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   const currentYear = new Date().getFullYear();
   const minYear = 1985; // AMTA founding
