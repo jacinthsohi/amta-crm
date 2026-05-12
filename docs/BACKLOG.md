@@ -12,15 +12,29 @@ handoff docs.
 - 🧊 ICEBOX — not committing to, may never do
 - ✅ SHIPPED — done, kept here for momentum / portfolio context
 
-Last updated: May 12, 2026
+Last updated: May 12, 2026 (end of evening session)
 
 ---
 
 ## ✅ Recently shipped
 
+- **"Add judges" deep-link flow on Event detail page** (May 12, 2026)
+  - "Add judges" button next to Edit in Event detail header (tournament
+    events only — board meetings don't get the button)
+  - Navigates to `/contacts/import?eventId={id}` with full deep-link state
+  - Auto-checks "Add to event", pre-selects the event, defaults position
+    to "Judge", pre-selects the Judge category chip
+  - Contextual page reframing: H1 becomes "Add judges to [Event Name]",
+    subtitle explains the auto-applied settings, back / done buttons
+    return to the event
+  - Header auto-mapping with alias list — catches "Preferred Email
+    Address", "Cell phone", and common variants without manual mapping
+  - CSS overflow fix on column-mapping card for long Google Form
+    headers (`minmax(0, 1fr)` + `min-w-0` on selects)
 - **Contacts CSV import flow** (May 12, 2026)
   - 4-step wizard at `/contacts/import`: upload, map columns, processing, result
-  - Column auto-mapping from slugged header names
+  - "Import CSV" button on `/contacts` list page (entry point)
+  - Column auto-mapping from slugged header names + alias matching
   - Multi-category tagging during import (chip-based multi-select)
   - Optional event association with custom position field (defaults to "Judge")
   - Live preview of first 5 rows with column mapping applied
@@ -30,6 +44,8 @@ Last updated: May 12, 2026
   - Idempotent association inserts
   - Detailed result screen with imported / updated / errored breakdown +
     per-row error table
+  - **Validated with real-world data:** 97-row tournament-host CSV with
+    26 columns (Google Form export with idiosyncratic headers)
   - Spec: `docs/specs/contacts-csv-import-mvp.md`
 - **Judges separated from Staff on Event detail page** (May 12, 2026)
   - Render order: Hosts → Staff → Documents → Projects → Interactions → Judges
@@ -103,14 +119,18 @@ Last updated: May 12, 2026
   `/admin/judge-claims`. Approve → creates contact tagged "Judge". Most
   code patterns reusable from alumni-claims feature. ~50% of the build
   effort since infrastructure exists.
-- **CSV import entry-point button on `/contacts`.** Add an "Import CSV"
-  button next to the existing "Export CSV" button. The import route works
-  today, but is undiscoverable without typing the URL. Tiny commit —
-  ~10 min.
-- **CSV import entry-point on Event page.** "Add judges" button on
-  `/events/:id` that opens the import flow pre-selected to that event.
-  Logical extension of the import feature; pure UX improvement for the
-  primary use case (importing judges for a specific tournament).
+- **Mapping UX polish — show first-row preview next to each dropdown.**
+  Real-world tournament-host CSVs have 200-character Google Form question
+  headers. Current dropdown shows the header text alone, which can be hard
+  to identify without context. Show the first row's value next to each
+  option (e.g. "Preferred Email Address → mike@example.com") to make
+  manual mapping faster on weird CSVs.
+- **README update for CSV import.** Add a "Workflow features" section
+  between AI Features and "A look around the rest of the app." Document
+  the import flow + Add judges deep-link as a peer to AI features, not
+  buried in the screenshots tour. Frames the project as showcasing both
+  AI fluency AND product-thinking. Pre-work: take clean screenshots in
+  good lighting (the import result screen is the money shot). ~30 min.
 - **Tighten `alumni_claims` RLS to admin-only.** Current policies let any
   authenticated user read and update claims. Fine while every authenticated
   user is an admin, but a real liability once that stops being true.
@@ -157,8 +177,6 @@ Last updated: May 12, 2026
   Abandoned; using prod for everything.
 - **Refresh contact-relationships screenshot in the repo README.**
 - **Clean up 308 latent TS errors incrementally.**
-- **Delete `src/lib/auth.tsx.backup`.** Leftover from a previous auth
-  surgery session.
 - **Add `npm run build` step to pre-push workflow.** Vite dev is more
   permissive than Vercel's production build (skips strict TS, doesn't
   catch missing deps in package.json). The papaparse-missing-from-deps
@@ -229,5 +247,7 @@ happen while the details are fresh.
   what's the dupe story (exact email match only, additive update on
   match), what's the position default ("Judge" — because the immediate
   use case is judges-to-tournaments), what's the entry-point UX (two
-  buttons not split dropdown), what's the row cap (500). Each one
-  pushed back on the temptation to over-build.
+  buttons not split dropdown), what's the row cap (500), how to handle
+  tournament-host CSVs with idiosyncratic headers (alias list + manual
+  mapping as primary path, not fallback). Each one pushed back on the
+  temptation to over-build.
