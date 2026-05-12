@@ -15,8 +15,12 @@
 //   Step 4: Result — imported / updated / errored counts with details.
 //
 // Deep-linking: when arriving from an Event detail page's "Add judges"
-// button, the URL contains ?eventId=xyz. We pre-select that event and
-// auto-check "Add to event" so the admin can skip straight to uploading.
+// button, the URL contains ?eventId=xyz. In that "add judges" mode we:
+//   - Show a contextual page header ("Add judges to [Event Name]")
+//   - Auto-check "Add all contacts to an event" with the event pre-selected
+//   - Pre-select the "Judge" category chip
+//   - Default the event_staff position to "Judge"
+// The admin can override any of these on the Map step.
 //
 // Spec: docs/specs/contacts-csv-import-mvp.md
 // =============================================================================
@@ -62,6 +66,85 @@ const FIELD_LABELS: Record<ContactField, string> = {
 
 const REQUIRED_FIELDS: ContactField[] = ["first_name", "last_name", "email"];
 
+// -----------------------------------------------------------------------------
+// Header aliases for auto-mapping
+// -----------------------------------------------------------------------------
+// Each ContactField has a list of slugged header variants we'll auto-detect.
+// The matcher iterates CSV headers in their original order and assigns each
+// to the first field whose aliases include the slugged header — so if a CSV
+// has both "Preferred Email Address" and "Email Address", whichever appears
+// first in the CSV wins.
+//
+// Slugging rule: lowercase, trim, replace spaces / hyphens / question marks
+// with underscores. Apostrophes, ampersands, and other punctuation get
+// dropped. Keeps the alias list short and human-readable.
+//
+// Tournament hosts send CSVs with their own conventions — the aliases catch
+// the obvious cases (First Name, Last Name, Preferred Email Address, Cell
+// phone), but manual mapping is the expected workflow for unusual headers,
+// not a fallback. The auto-map is a head start, not a guarantee.
+// -----------------------------------------------------------------------------
+const HEADER_ALIASES: Record<ContactField, string[]> = {
+  first_name: ["first_name", "firstname", "given_name", "fname"],
+  last_name: ["last_name", "lastname", "surname", "family_name", "lname"],
+  email: [
+    "email",
+    "email_address",
+    "preferred_email",
+    "preferred_email_address",
+    "e_mail",
+    "e_mail_address",
+    "mail",
+  ],
+  phone: [
+    "phone",
+    "phone_number",
+    "phone_no",
+    "cell",
+    "cell_phone",
+    "cell_phone_number",
+    "mobile",
+    "mobile_phone",
+    "mobile_number",
+    "telephone",
+    "tel",
+  ],
+  notes: ["notes", "note", "comments", "comment", "description"],
+};
+
+function slugHeader(s: string): string {
+  return s
+    .toLowerCase()
+    .trim()
+    .replace(/[\s\-?]+/g, "_") // spaces, hyphens, question marks → underscore
+    .replace(/[^a-z0-9_]/g, ""); // strip anything else (apostrophes, &, etc.)
+}
+
+// Given a list of CSV headers in their original order, produces a Mapping
+// by iterating headers and assigning each to the first matching ContactField
+// that's not already filled. First-in-CSV-order wins for ambiguous cases.
+function buildAutoMapping(headers: string[]): Mapping {
+  const result: Mapping = {
+    first_name: null,
+    last_name: null,
+    email: null,
+    phone: null,
+    notes: null,
+  };
+  const fields = Object.keys(HEADER_ALIASES) as ContactField[];
+  for (const header of headers) {
+    const slug = slugHeader(header);
+    for (const field of fields) {
+      if (result[field] !== null) continue; // already filled
+      if (HEADER_ALIASES[field].includes(slug)) {
+        result[field] = header;
+        break;
+      }
+    }
+  }
+  return result;
+}
+
 interface CategoryRow {
   id: string;
   name: string;
@@ -100,9 +183,9 @@ export default function ContactsImportPage() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   // Pre-selected event from the URL (deep-link from Event detail page).
-  // Null if not present or malformed. We don't validate the UUID format
-  // here — if the eventId doesn't match any event in the lookback window,
-  // MapStep silently falls back to no preselect.
+  // Null if not present. We don't validate the UUID format here — if the
+  // eventId doesn't match any event in the lookback window, MapStep
+  // silently falls back to no preselect.
   const preselectedEventId = searchParams.get("eventId");
 
   const [step, setStep] = useState<Step>("upload");
@@ -111,6 +194,41 @@ export default function ContactsImportPage() {
   const [isDragging, setIsDragging] = useState(false);
   const [importConfig, setImportConfig] = useState<ImportConfig | null>(null);
   const [importResult, setImportResult] = useState<ImportResult | null>(null);
+
+  // The contextual page header needs the resolved event name. We fetch it
+  // here at the page level (in addition to the events lookup inside MapStep)
+  // so the header renders correctly during the Upload step BEFORE the
+  // admin has loaded a CSV.
+  const [pageHeaderEvent, setPageHeaderEvent] = useState<EventRow | null>(null);
+
+  useEffect(() => {
+    if (!preselectedEventId) return;
+    let cancelled = false;
+    (async () => {
+      const lookbackIso = new Date(
+        Date.now() - EVENT_LOOKBACK_DAYS * 24 * 60 * 60 * 1000,
+      )
+        .toISOString()
+        .slice(0, 10);
+      const { data, error } = await supabase
+        .from("active_events")
+        .select("id, name, start_date")
+        .eq("id", preselectedEventId)
+        .gte("start_date", lookbackIso)
+        .maybeSingle();
+      if (cancelled) return;
+      if (error || !data) {
+        // Silent fallback: stale or invalid eventId → just don't customize
+        // the header. The maroon banner inside MapStep also won't render
+        // in this case, so the experience stays consistent.
+        return;
+      }
+      setPageHeaderEvent(data as EventRow);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [preselectedEventId]);
 
   // -----------------------------------------------------------------------
   // CSV parsing
@@ -187,24 +305,36 @@ export default function ContactsImportPage() {
     setStep("upload");
   }
 
+  // Contextual page header — when arriving via "Add judges" deep link with
+  // a valid event, the page reframes around that workflow.
+  const isAddJudgesMode = Boolean(pageHeaderEvent);
+  const pageTitle = isAddJudgesMode
+    ? `Add judges to ${pageHeaderEvent!.name}`
+    : "Import contacts from CSV";
+  const pageSubtitle = isAddJudgesMode
+    ? `Upload a CSV of judges. They'll be tagged as Judge and added to the event automatically.`
+    : `Upload a CSV to bulk-add contacts. Max ${MAX_ROWS} rows per file.`;
+
   return (
     <div className="mx-auto max-w-3xl px-6 py-8">
       <button
         type="button"
-        onClick={() => navigate("/contacts")}
+        onClick={() =>
+          isAddJudgesMode
+            ? navigate(`/events/${pageHeaderEvent!.id}`)
+            : navigate("/contacts")
+        }
         className="mb-4 inline-flex items-center gap-1 text-xs text-zinc-500 hover:text-zinc-700"
       >
         <ArrowLeft size={12} />
-        Back to contacts
+        {isAddJudgesMode
+          ? `Back to ${pageHeaderEvent!.name}`
+          : "Back to contacts"}
       </button>
 
       <header className="mb-6">
-        <h1 className="text-2xl font-semibold text-zinc-900">
-          Import contacts from CSV
-        </h1>
-        <p className="mt-1 text-sm text-zinc-600">
-          Upload a CSV to bulk-add contacts. Max {MAX_ROWS} rows per file.
-        </p>
+        <h1 className="text-2xl font-semibold text-zinc-900">{pageTitle}</h1>
+        <p className="mt-1 text-sm text-zinc-600">{pageSubtitle}</p>
       </header>
 
       <StepIndicator currentStep={step} />
@@ -235,6 +365,7 @@ export default function ContactsImportPage() {
         <MapStep
           parsed={parsed}
           preselectedEventId={preselectedEventId}
+          isAddJudgesMode={isAddJudgesMode}
           onBack={() => {
             setParsed(null);
             setStep("upload");
@@ -259,7 +390,13 @@ export default function ContactsImportPage() {
       {step === "result" && importResult && (
         <ResultStep
           result={importResult}
-          onDone={() => navigate("/contacts")}
+          isAddJudgesMode={isAddJudgesMode}
+          eventForReturn={pageHeaderEvent}
+          onDone={() =>
+            isAddJudgesMode
+              ? navigate(`/events/${pageHeaderEvent!.id}`)
+              : navigate("/contacts")
+          }
           onImportAnother={resetAll}
         />
       )}
@@ -273,28 +410,23 @@ export default function ContactsImportPage() {
 function MapStep({
   parsed,
   preselectedEventId,
+  isAddJudgesMode,
   onBack,
   onSubmit,
 }: {
   parsed: ParsedCsv;
   preselectedEventId: string | null;
+  isAddJudgesMode: boolean;
   onBack: () => void;
   onSubmit: (config: ImportConfig) => void;
 }) {
   // ----- Mapping state -----
-  // Auto-suggest mappings by slugged exact match between header and field.
-  const initialMapping: Mapping = useMemo(() => {
-    const slug = (s: string) =>
-      s.toLowerCase().trim().replace(/[\s-]+/g, "_");
-    const headerSlugs = new Map(parsed.headers.map((h) => [slug(h), h]));
-    return {
-      first_name: headerSlugs.get("first_name") ?? null,
-      last_name: headerSlugs.get("last_name") ?? null,
-      email: headerSlugs.get("email") ?? null,
-      phone: headerSlugs.get("phone") ?? null,
-      notes: headerSlugs.get("notes") ?? null,
-    };
-  }, [parsed.headers]);
+  // Auto-map CSV columns to contact fields using the alias list. See
+  // HEADER_ALIASES at the top of this file for the matching rules.
+  const initialMapping: Mapping = useMemo(
+    () => buildAutoMapping(parsed.headers),
+    [parsed.headers],
+  );
   const [mapping, setMapping] = useState<Mapping>(initialMapping);
 
   // ----- Bulk options state -----
@@ -343,18 +475,31 @@ function MapStep({
         );
         return;
       }
-      setCategories(catsRes.data ?? []);
-      setEvents((eventsRes.data ?? []) as EventRow[]);
+      const loadedCategories = catsRes.data ?? [];
+      const loadedEvents = (eventsRes.data ?? []) as EventRow[];
+      setCategories(loadedCategories);
+      setEvents(loadedEvents);
 
       // If the URL preselected an event that ISN'T in the lookback window
       // (e.g. an old event the admin clicked from), silently un-preselect
       // rather than leaving the UI in a broken state with a phantom value.
       if (
         preselectedEventId &&
-        !(eventsRes.data ?? []).some((ev) => ev.id === preselectedEventId)
+        !loadedEvents.some((ev) => ev.id === preselectedEventId)
       ) {
         setSelectedEventId("");
         setAddToEvent(false);
+      }
+
+      // If we're in add-judges mode and there's a "Judge" category, pre-
+      // select it. Find it case-insensitively in case casing drifts.
+      if (isAddJudgesMode) {
+        const judgeCategory = loadedCategories.find(
+          (c) => c.name.toLowerCase() === "judge",
+        );
+        if (judgeCategory) {
+          setSelectedCategoryIds(new Set([judgeCategory.id]));
+        }
       }
     })();
     return () => {
@@ -366,15 +511,6 @@ function MapStep({
   const missingRequired = REQUIRED_FIELDS.filter((f) => !mapping[f]);
   const canSubmit =
     missingRequired.length === 0 && (!addToEvent || selectedEventId !== "");
-
-  // Find the preselected event's display name for the confirmation banner.
-  const preselectedEvent = useMemo(
-    () =>
-      preselectedEventId
-        ? events.find((ev) => ev.id === preselectedEventId)
-        : null,
-    [events, preselectedEventId],
-  );
 
   function toggleCategory(id: string) {
     setSelectedCategoryIds((prev) => {
@@ -418,27 +554,6 @@ function MapStep({
         </div>
       </div>
 
-      {/* Pre-fill confirmation banner. Only shown when we successfully
-          resolved a preselected event from the URL — appears between file
-          summary and column mapping. */}
-      {preselectedEvent && addToEvent && selectedEventId === preselectedEvent.id && (
-        <div className="flex items-start gap-2 rounded-md border border-maroon-200 bg-maroon-50 px-3 py-2 text-sm text-maroon-900">
-          <CheckCircle2
-            size={16}
-            className="mt-0.5 flex-shrink-0 text-maroon-700"
-          />
-          <div>
-            <p className="font-medium">
-              Adding contacts to: {preselectedEvent.name}
-            </p>
-            <p className="mt-0.5 text-xs text-maroon-700">
-              All imported contacts will be assigned as "Judge" to this event.
-              You can change this below.
-            </p>
-          </div>
-        </div>
-      )}
-
       {lookupError && (
         <div className="flex items-start gap-2 rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">
           <AlertCircle size={16} className="mt-0.5 flex-shrink-0" />
@@ -459,9 +574,16 @@ function MapStep({
           {(Object.keys(FIELD_LABELS) as ContactField[]).map((field) => {
             const isRequired = REQUIRED_FIELDS.includes(field);
             return (
+              // grid-cols-[140px_minmax(0,1fr)] is the fix for tournament-host
+              // CSVs with very long column names (e.g. 200-char Google Form
+              // questions). Default `1fr` lets the track expand to fit the
+              // widest dropdown option, breaking the card layout. `minmax(0,
+              // 1fr)` explicitly allows the track to shrink to 0, and the
+              // select inside uses w-full + min-w-0 to fill the now-bounded
+              // track without bursting out of it.
               <div
                 key={field}
-                className="grid grid-cols-[140px_1fr] items-center gap-3"
+                className="grid grid-cols-[140px_minmax(0,1fr)] items-center gap-3"
               >
                 <label
                   htmlFor={`map-${field}`}
@@ -481,7 +603,7 @@ function MapStep({
                       [field]: e.target.value === "" ? null : e.target.value,
                     }))
                   }
-                  className="rounded-md border border-zinc-300 px-2 py-1.5 text-sm focus:border-maroon-700 focus:outline-none focus:ring-1 focus:ring-maroon-700"
+                  className="w-full min-w-0 rounded-md border border-zinc-300 px-2 py-1.5 text-sm focus:border-maroon-700 focus:outline-none focus:ring-1 focus:ring-maroon-700"
                 >
                   <option value="">— None —</option>
                   {parsed.headers.map((h) => (
@@ -549,7 +671,7 @@ function MapStep({
 
           {addToEvent && (
             <div className="mt-3 grid grid-cols-2 gap-3">
-              <div>
+              <div className="min-w-0">
                 <label
                   htmlFor="event-select"
                   className="mb-1 block text-xs font-medium text-zinc-700"
@@ -560,7 +682,7 @@ function MapStep({
                   id="event-select"
                   value={selectedEventId}
                   onChange={(e) => setSelectedEventId(e.target.value)}
-                  className="w-full rounded-md border border-zinc-300 px-2 py-1.5 text-sm focus:border-maroon-700 focus:outline-none focus:ring-1 focus:ring-maroon-700"
+                  className="w-full min-w-0 rounded-md border border-zinc-300 px-2 py-1.5 text-sm focus:border-maroon-700 focus:outline-none focus:ring-1 focus:ring-maroon-700"
                 >
                   <option value="">Select an event…</option>
                   {events.map((ev) => (
@@ -573,7 +695,7 @@ function MapStep({
                   ))}
                 </select>
               </div>
-              <div>
+              <div className="min-w-0">
                 <label
                   htmlFor="event-position"
                   className="mb-1 block text-xs font-medium text-zinc-700"
@@ -586,7 +708,7 @@ function MapStep({
                   value={eventPosition}
                   onChange={(e) => setEventPosition(e.target.value)}
                   placeholder="Judge"
-                  className="w-full rounded-md border border-zinc-300 px-2 py-1.5 text-sm focus:border-maroon-700 focus:outline-none focus:ring-1 focus:ring-maroon-700"
+                  className="w-full min-w-0 rounded-md border border-zinc-300 px-2 py-1.5 text-sm focus:border-maroon-700 focus:outline-none focus:ring-1 focus:ring-maroon-700"
                 />
               </div>
             </div>
@@ -977,16 +1099,25 @@ async function addAssociations({
 // =============================================================================
 function ResultStep({
   result,
+  isAddJudgesMode,
+  eventForReturn,
   onDone,
   onImportAnother,
 }: {
   result: ImportResult;
+  isAddJudgesMode: boolean;
+  eventForReturn: EventRow | null;
   onDone: () => void;
   onImportAnother: () => void;
 }) {
   const errors = result.outcomes.filter(
     (o): o is Extract<RowOutcome, { kind: "errored" }> => o.kind === "errored",
   );
+
+  const doneLabel =
+    isAddJudgesMode && eventForReturn
+      ? `Done — back to ${eventForReturn.name}`
+      : "Done — back to contacts";
 
   return (
     <section className="mt-6 space-y-6">
@@ -1067,7 +1198,7 @@ function ResultStep({
           onClick={onDone}
           className="rounded-md bg-maroon-700 px-4 py-1.5 text-sm font-medium text-white hover:bg-maroon-800"
         >
-          Done — back to contacts
+          {doneLabel}
         </button>
       </div>
     </section>
