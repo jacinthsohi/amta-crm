@@ -70,8 +70,67 @@ Last updated: May 12, 2026 (end of evening session)
 
 ## 🔴 HIGH
 
+- **🔒 SECURITY: `active_*` views bypass RLS — cross-user data leak.**
+  Discovered May 12, 2026 while investigating bug B1 ("can't delete Maggy
+  Randels conversation").
+  
+  **Root cause:** Postgres views run with the *creator's* permissions by
+  default, not the querying user's. `active_ai_conversations` (and almost
+  certainly every other `active_*` view in the schema) is owned by
+  `postgres` (superuser), which bypasses RLS on the underlying table.
+  Result: when an authenticated user queries `active_ai_conversations`,
+  they see ALL active rows, not just rows where `auth_user_id = auth.uid()`.
+  
+  **Evidence trail from the investigation:**
+  - RLS policies on `ai_conversations` are configured correctly
+    (`authenticated_select_ai_conversations` filters on `auth_user_id =
+    auth.uid()`)
+  - But the sidebar shows 2 conversations to admin user (mine + Maggy
+    Randels'), where Maggy is a separate auth user
+    (`32c79ee5-134f-49ba-ac67-38033f0bc94e`, email
+    `margaret.e.randels@gmail.com`)
+  - `SELECT COUNT(*) FROM ai_conversations WHERE deleted_at IS NULL` =
+    2, matching the sidebar count exactly → admin is seeing everyone's
+    conversations
+  - View owner is `postgres` (confirmed via `SELECT viewowner FROM
+    pg_views WHERE viewname = 'active_ai_conversations'`)
+  
+  **Scope of impact (likely broader than just one view):** Every
+  `active_*` view in the schema was probably created the same way.
+  Almost certainly affected: `active_contacts`, `active_events`,
+  `active_committees`, `active_contact_categories`,
+  `active_event_documents`, `active_event_hosts`, `active_event_staff`,
+  `active_invitations`, `active_officer_terms`, `active_program_a...`,
+  others visible in the table editor sidebar. Each one potentially leaks
+  whatever cross-user data its underlying table is supposed to protect.
+  
+  **Why this isn't an active incident:** Jacinth is currently the only
+  real signed-in user. Maggy hasn't logged in. So the leak is
+  theoretical — no user is actually seeing data they shouldn't. But it
+  becomes an active incident the moment a second user logs in.
+  
+  **Fix approach:** Audit every `public.active_*` view. For each one:
+  recreate with `WITH (security_invoker = on)` so the view runs with the
+  querying user's permissions and RLS on the underlying table applies.
+  Likely a single migration that drops + recreates all the views.
+  Test pass on every feature that reads from an `active_*` view to
+  confirm RLS-filtered results still surface what the UI expects.
+  Document the gotcha in a migration comment so future views don't
+  repeat the mistake.
+  
+  **Symptom artifact preserved as a reminder:** Did NOT hard-delete
+  Maggy's conversation from the database. It's still there, still
+  showing in the sidebar, still un-deletable via the UI. Visible
+  reminder of the bug until the proper fix lands. Row ID:
+  `d953c4cb-e50f-490e-b2ee-89038eadf019`.
+  
+  **Replaces bug B1 in 🐛 BUGS section** — what looked like "can't
+  delete this one conversation" turned out to be a much bigger issue
+  manifesting at the surface.
+
 - **Email automation for invitations.** Currently admins copy/paste invite
   links manually. Unblocks the entire "actually onboarding people" flow.
+  Note: should NOT onboard new users until the views RLS bypass is fixed.
 
 ---
 
@@ -184,8 +243,10 @@ Last updated: May 12, 2026 (end of evening session)
 
 ## 🐛 BUGS
 
-- **B1: Can't delete "Tell me about Maggy Randels" Ask AI conversation.**
-  Other conversations delete fine; just this one fails.
+- **B1: ~~Can't delete "Tell me about Maggy Randels" Ask AI
+  conversation.~~** RESOLVED AS DIAGNOSIS — turned out to be the
+  `active_*` views RLS bypass issue, now in 🔴 HIGH. Maggy's row left in
+  place as a visible reminder of the underlying bug.
 - **B2: Officer terms can't be edited inline** like other attached
   attributes can. UX inconsistency.
 - **B3: Can't remove program affiliation from a Contact page.** Today the
@@ -221,15 +282,35 @@ Last updated: May 12, 2026 (end of evening session)
 These aren't backlog items — they're docs/portfolio work that should
 happen while the details are fresh.
 
-- **RLS debugging bug story (May 12, 2026).** The 403 on `/alumni-signup`.
-  Arc: diagnosed the bug correctly on the first hypothesis (anon-only
-  INSERT policy, admins blocked), walked it back when an "incognito test"
-  seemed to reproduce the bug for anon users too, then discovered the
-  incognito browser was still carrying an authenticated session
-  (`role: "authenticated"` in the JWT). Original diagnosis was right.
-  Lessons: confirm test setup before trusting test results; RLS policies
-  are scoped per role; `apikey` and `Authorization` headers play
-  different roles in Supabase requests.
+- **RLS debugging bug story (May 12, 2026 morning).** The 403 on
+  `/alumni-signup`. Arc: diagnosed the bug correctly on the first
+  hypothesis (anon-only INSERT policy, admins blocked), walked it back
+  when an "incognito test" seemed to reproduce the bug for anon users
+  too, then discovered the incognito browser was still carrying an
+  authenticated session (`role: "authenticated"` in the JWT). Original
+  diagnosis was right. Lessons: confirm test setup before trusting test
+  results; RLS policies are scoped per role; `apikey` and
+  `Authorization` headers play different roles in Supabase requests.
+- **Postgres views bypassing RLS bug story (May 12, 2026 evening).** The
+  "can't delete one conversation" investigation that turned into a real
+  security finding. Arc: started as a wine-time minor bug ("delete
+  button doesn't work on one specific conversation"), instrumented
+  DevTools, found the soft-delete UPDATE was returning 204 with 0 rows
+  affected. Suspected RLS UPDATE policy mismatch. Checked the row's
+  `auth_user_id` → realized it belonged to *Maggy Randels' own user
+  account*, which raised the bigger question: why is her conversation
+  in my sidebar in the first place? Read the RLS policies on
+  `ai_conversations` (correctly scoped). Read the view definition for
+  `active_ai_conversations` → owned by `postgres`. That's the bug:
+  views run with the creator's permissions by default, so a postgres-
+  owned view bypasses the underlying table's RLS. Likely affects every
+  `active_*` view in the schema. Lessons: when RLS policies LOOK
+  correct but data is leaking, check the views; "view owner = superuser
+  + no `security_invoker` clause" is a security footgun that's easy to
+  miss; sometimes the "tiny bug" is the visible tip of a much larger
+  architectural issue; choosing to NOT patch the symptom can be the
+  right call — a visible reminder of an unfixed bug is better than
+  silent technical debt.
 - **CSV import StrictMode bug story (May 12, 2026).** Import processing
   hung at "0 of 1" even though all the Supabase calls succeeded. Root
   cause: React 18 StrictMode mounts effects twice in dev. The cleanup
