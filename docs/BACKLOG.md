@@ -18,6 +18,23 @@ Last updated: May 12, 2026
 
 ## ✅ Recently shipped
 
+- **Contacts CSV import flow** (May 12, 2026)
+  - 4-step wizard at `/contacts/import`: upload, map columns, processing, result
+  - Column auto-mapping from slugged header names
+  - Multi-category tagging during import (chip-based multi-select)
+  - Optional event association with custom position field (defaults to "Judge")
+  - Live preview of first 5 rows with column mapping applied
+  - Per-row error collection — partial failures don't abort the batch
+  - Within-CSV duplicate detection + cross-CSV duplicate handling (additive
+    update on email match)
+  - Idempotent association inserts
+  - Detailed result screen with imported / updated / errored breakdown +
+    per-row error table
+  - Spec: `docs/specs/contacts-csv-import-mvp.md`
+- **Judges separated from Staff on Event detail page** (May 12, 2026)
+  - Render order: Hosts → Staff → Documents → Projects → Interactions → Judges
+  - Judges last because real tournaments have hundreds of judges; mid-page
+    placement would push everything else below a giant scroll
 - **Alumni claims admin flow — Phase 2 complete** (May 11–12, 2026)
   - Generic Modal primitive (`src/components/Modal.tsx`)
   - Review modal with duplicate detection banner
@@ -44,28 +61,81 @@ Last updated: May 12, 2026
 
 ## 🟡 MEDIUM
 
+- **Add seasonal dimension to committee assignments + board membership.**
+  AMTA operates on July–June "seasons" tied to the annual board meeting.
+  Committees can exist in one season and not the next (e.g. Operational
+  Excellence exists for 2025-2026; may not for 2026-2027). Board
+  membership rotates similarly. **Path:** add a `season` column to
+  `committee_assignments` (string like "2025-2026"), keep the existing
+  `start_date`/`end_date` columns as underlying truth, surface season as
+  the user-facing concept. Same pattern for board membership. UI: split
+  Contact page into "Current committees" / "Past committees" sections.
+  Scope: schema migration + data backfill + UI changes in 2-3 places.
+  Half-day to full-day. Also implicates bug B2 (officer terms).
+- **Constrain `event_staff.position` to a canonical dropdown.** Free-text
+  Position field causes data drift (e.g. "Rep" vs "AMTA Rep" vs "AMTA
+  Representative"). Convert to dropdown with values: Judge, AMTA
+  Representative, Tournament Director, Tab Director, Judge Liaison, Host,
+  Volunteer, and "Other (specify)" for edge cases. Pre-work: SQL audit of
+  currently-used position values, decide canonical list, then ship.
+- **KPI / Data dashboard at `/data`** (renamed from `/dashboard` to avoid
+  collision with existing route). 5 metric cards: Active programs, Active
+  alumni, Active board members (with director/first-year/second-year
+  breakdown), Pending invitations, Recent contact additions (last 90 days).
+  Pre-work: need to populate `board_terms` table — currently zero rows.
+  Also potentially a US state heatmap of active programs once geographic
+  data is populated.
+- **Populate geographic data on `programs` table.** Currently 484 programs,
+  zero have city / state / website filled. Blocks the heatmap viz. Two
+  paths: source a spreadsheet and use the new CSV import flow (if we
+  extend it to programs), or build a focused admin tool. Also add a
+  `country` field while we're at it (1-2 programs are non-US — Canada,
+  South Korea).
+- **Admin data-cleanup / dupe-merge tool.** Find duplicate contacts via
+  heuristics (email match, name + email-domain match, similar names +
+  shared program). Side-by-side comparison UI. Pick fields to keep from
+  each. Merge into one record, transferring all associations (categories,
+  program affiliations, event_staff, interactions). Independent of any
+  import flow — imports flag dupes, this tool resolves them. Full
+  session of focused work.
+- **External judge signup flow.** Public form at `/judge-signup` mirroring
+  `/alumni-signup`. Lands in `judge_claims` table. Admin review queue at
+  `/admin/judge-claims`. Approve → creates contact tagged "Judge". Most
+  code patterns reusable from alumni-claims feature. ~50% of the build
+  effort since infrastructure exists.
+- **CSV import entry-point button on `/contacts`.** Add an "Import CSV"
+  button next to the existing "Export CSV" button. The import route works
+  today, but is undiscoverable without typing the URL. Tiny commit —
+  ~10 min.
+- **CSV import entry-point on Event page.** "Add judges" button on
+  `/events/:id` that opens the import flow pre-selected to that event.
+  Logical extension of the import feature; pure UX improvement for the
+  primary use case (importing judges for a specific tournament).
 - **Tighten `alumni_claims` RLS to admin-only.** Current policies let any
   authenticated user read and update claims. Fine while every authenticated
   user is an admin, but a real liability once that stops being true.
-  Separate migration; deferred from the Phase 2 build.
 - **Combobox UX for the program dropdown on `/alumni-signup`.** 483 native
-  `<select>` options is bad UX. Type-ahead combobox would be a real
-  improvement.
+  `<select>` options is bad UX. Type-ahead combobox.
 - **Expand alumni signup form fields.** Needs scoping. Candidates:
   start year (would also fix the affiliation `start_year = end_year`
   tech debt), pronouns, roles within program, current professional
-  context. Do a small product design exercise before building.
+  context.
+- **Collapsible sidebar.** Add a toggle to collapse the left sidebar to
+  icons-only (or fully hidden). Useful for screen-real-estate-heavy
+  pages like the CSV import flow.
 - **Self-service profile editing for alumni (Phase 3).** Separate auth
   flow from the admin CRM. Approved alumni get a way to update their own
   info without admin intervention.
-- **Judge management as event sub-feature.** Estimated 2–3 days.
 - **Sortable lists across Contacts / Programs / Events.** Shared
   `<SortableTable>` component. Bigger refactor than the one-line default
   sort that just shipped.
 - **Profile / Settings page (separate from Contact record).** User
   account settings, not the same thing as someone's contact data.
-- **CSV import for Programs + Contacts.** Symmetric to the existing
-  CSV export.
+- **CSV import for Programs.** Symmetric to the existing CSV export, and
+  the unblock for populating program geographic data.
+- **Revamp Home page.** Reduce/remove stats; focus on individual user
+  workflow (their tasks, their recent interactions, etc). Data-style
+  metrics live on `/data` instead.
 - **Officer terms inline edit.** See bug B2.
 - **Bulk-assign Current Board Member.** Admin convenience for term
   transitions.
@@ -79,9 +149,8 @@ Last updated: May 12, 2026
 
 - **Add email consent disclosure to `/alumni-signup`.** "By submitting, you
   agree to receive communications from AMTA about alumni programming."
-  Pair with email infrastructure rollout. Current copy ("agree we may
-  contact you about your AMTA alumni status") is narrower than full email
-  opt-in.
+  Pair with email infrastructure rollout. Current copy is narrower than
+  full email opt-in.
 - **Find the Chrome extension slowing Supabase calls locally.** Affects
   dev only.
 - **Delete / retire dev Supabase project** (`wdxgbtwshcmvmiedqjyh`).
@@ -90,6 +159,10 @@ Last updated: May 12, 2026
 - **Clean up 308 latent TS errors incrementally.**
 - **Delete `src/lib/auth.tsx.backup`.** Leftover from a previous auth
   surgery session.
+- **Add `npm run build` step to pre-push workflow.** Vite dev is more
+  permissive than Vercel's production build (skips strict TS, doesn't
+  catch missing deps in package.json). The papaparse-missing-from-deps
+  issue today would have been caught with a local build before push.
 
 ---
 
@@ -111,14 +184,19 @@ Last updated: May 12, 2026
 
 ## 🧊 ICEBOX
 
-- **Navigator.locks bug writeup.** Claude drove the diagnostic work; felt
-  inauthentic to publish under my name alone.
-- **AI summary staleness.** Known issue, no fix scoped.
-- **Case file DB feature.** Standalone idea, no current pull.
 - **Recover alumni-claims-admin-mvp.md spec.** Referenced in May 11 handoff
   but not in this repo. Check the original chat session it was written in.
   Low priority — the feature is built; the spec is only useful for portfolio
   context.
+- **Tabbed Event detail UI (v2 for judges).** Once judge counts grow into
+  the hundreds-per-event range, consider a tabbed interface on Event
+  detail: "Overview" tab (Hosts, Staff, Documents, Projects, Interactions)
+  and a "Judges" tab. Eliminates vertical scroll. Currently judges are
+  rendered last on the same page, which works at small-to-mid scale.
+- **Navigator.locks bug writeup.** Claude drove the diagnostic work; felt
+  inauthentic to publish under my name alone.
+- **AI summary staleness.** Known issue, no fix scoped.
+- **Case file DB feature.** Standalone idea, no current pull.
 
 ---
 
@@ -136,3 +214,20 @@ happen while the details are fresh.
   Lessons: confirm test setup before trusting test results; RLS policies
   are scoped per role; `apikey` and `Authorization` headers play
   different roles in Supabase requests.
+- **CSV import StrictMode bug story (May 12, 2026).** Import processing
+  hung at "0 of 1" even though all the Supabase calls succeeded. Root
+  cause: React 18 StrictMode mounts effects twice in dev. The cleanup
+  function flipped a `cancelled` flag between the two mounts, and the
+  async work — still running from the first mount — checked the flag
+  AFTER finishing and skipped `onComplete`. Result was correct, callback
+  was suppressed. Fix: drop the cancelled flag, rely solely on the
+  `startedRef` guard. Lessons: StrictMode is friction that catches real
+  bugs; for single-shot async work in an effect, refs are cleaner than
+  flags.
+- **CSV import as a product-design exercise (May 12, 2026).** Started
+  as "build CSV import," became a sequence of real product decisions:
+  what's the dupe story (exact email match only, additive update on
+  match), what's the position default ("Judge" — because the immediate
+  use case is judges-to-tournaments), what's the entry-point UX (two
+  buttons not split dropdown), what's the row cap (500). Each one
+  pushed back on the temptation to over-build.
