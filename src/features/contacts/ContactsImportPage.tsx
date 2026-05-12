@@ -617,21 +617,13 @@ function MapStep({
 // ProcessingStep — the actual import work
 // =============================================================================
 //
-// Sequential row-by-row processing. Sequential (not parallel) is intentional:
-//   - Lets us track progress accurately for the UI
-//   - Lets us detect within-CSV duplicate emails (row N matches row N-3)
-//   - Avoids hammering Supabase with 500 parallel requests
-//
-// Per row, we:
-//   1. Validate (required fields present, email format)
-//   2. Check if email already exists in contacts (case-insensitive)
-//   3. If exists → add categories + event_staff to existing record (skip
-//      duplicates of those associations)
-//   4. If new → insert contact + categories + event_staff
-//   5. Either way, record the outcome
-//
-// If any single row's DB call fails, we collect the error and continue to the
-// next row. We never throw out of the loop — partial success is the design.
+// Note on StrictMode: in development, React 18 mounts components twice to help
+// surface bugs. We guard against re-running the import via startedRef. We
+// intentionally do NOT have a cleanup that flips a `cancelled` flag — earlier
+// versions did, and the cleanup fired between StrictMode's two mounts and
+// permanently marked the import as cancelled, which suppressed the onComplete
+// call once the work actually finished. The startedRef alone is the right
+// guard; the work is single-shot per mount.
 // =============================================================================
 function ProcessingStep({
   config,
@@ -642,24 +634,16 @@ function ProcessingStep({
 }) {
   const [progress, setProgress] = useState(0);
   const total = config.parsed.rows.length;
-  // Guard against StrictMode double-mount in dev kicking off the import twice.
   const startedRef = useRef(false);
 
   useEffect(() => {
     if (startedRef.current) return;
     startedRef.current = true;
 
-    let cancelled = false;
     (async () => {
-      const result = await runImport(config, (n) => {
-        if (!cancelled) setProgress(n);
-      });
-      if (!cancelled) onComplete(result);
+      const result = await runImport(config, (n) => setProgress(n));
+      onComplete(result);
     })();
-
-    return () => {
-      cancelled = true;
-    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -695,13 +679,11 @@ async function runImport(
 ): Promise<ImportResult> {
   const { parsed, mapping, categoryIds, eventId, eventPosition } = config;
   const outcomes: RowOutcome[] = [];
-  // Track emails we've already processed *within this import* to catch
-  // within-CSV duplicates. We fail the second occurrence with a specific reason.
   const seenInThisImport = new Set<string>();
 
   for (let i = 0; i < parsed.rows.length; i++) {
     const row = parsed.rows[i];
-    const csvRowNumber = i + 2; // 1-indexed, +1 for header row → matches what user sees
+    const csvRowNumber = i + 2;
 
     const firstName = mapping.first_name ? row[mapping.first_name]?.trim() : "";
     const lastName = mapping.last_name ? row[mapping.last_name]?.trim() : "";
@@ -714,9 +696,6 @@ async function runImport(
     const displayName =
       [firstName, lastName].filter(Boolean).join(" ") || `Row ${csvRowNumber}`;
 
-    // -----------------------------------------------------------------
-    // Row-level validation
-    // -----------------------------------------------------------------
     if (!firstName) {
       outcomes.push({
         kind: "errored",
@@ -758,7 +737,6 @@ async function runImport(
       continue;
     }
 
-    // Catch within-CSV duplicate emails before hitting the DB.
     if (seenInThisImport.has(email)) {
       outcomes.push({
         kind: "errored",
@@ -771,9 +749,6 @@ async function runImport(
     }
     seenInThisImport.add(email);
 
-    // -----------------------------------------------------------------
-    // Dupe check against existing contacts
-    // -----------------------------------------------------------------
     const { data: existing, error: lookupErr } = await supabase
       .from("contacts")
       .select("id")
@@ -793,9 +768,6 @@ async function runImport(
     }
 
     if (existing) {
-      // -------------------------------------------------------------
-      // Existing contact → add categories + event_staff (idempotent)
-      // -------------------------------------------------------------
       const addError = await addAssociations({
         contactId: existing.id,
         categoryIds,
@@ -820,9 +792,6 @@ async function runImport(
       continue;
     }
 
-    // -----------------------------------------------------------------
-    // New contact → insert + categories + event_staff
-    // -----------------------------------------------------------------
     const { data: inserted, error: insertErr } = await supabase
       .from("contacts")
       .insert({
@@ -853,8 +822,6 @@ async function runImport(
       eventPosition,
     });
     if (addError) {
-      // Contact was created but associations partially failed.
-      // We surface as errored so admin notices; the contact still exists.
       outcomes.push({
         kind: "errored",
         rowIndex: csvRowNumber,
@@ -882,12 +849,6 @@ async function runImport(
 // -----------------------------------------------------------------------------
 // addAssociations — add categories + event_staff to a contact, idempotently
 // -----------------------------------------------------------------------------
-// Returns null on success, or a user-facing error message string on failure.
-// Idempotent: if an association already exists, skip it silently. We achieve
-// this by querying for existing associations first, then only inserting the
-// missing ones. Race conditions are possible (two imports happening
-// simultaneously) but acceptable for a single-admin tool.
-// -----------------------------------------------------------------------------
 async function addAssociations({
   contactId,
   categoryIds,
@@ -899,7 +860,6 @@ async function addAssociations({
   eventId: string | null;
   eventPosition: string;
 }): Promise<string | null> {
-  // ---- Categories ----
   if (categoryIds.length > 0) {
     const { data: existing, error: lookupErr } = await supabase
       .from("contact_category_assignments")
@@ -925,7 +885,6 @@ async function addAssociations({
     }
   }
 
-  // ---- Event staff ----
   if (eventId) {
     const { data: existing, error: lookupErr } = await supabase
       .from("event_staff")
