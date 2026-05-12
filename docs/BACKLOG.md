@@ -173,8 +173,6 @@ Last updated: May 12, 2026 (end of evening session)
   full email opt-in.
 - **Find the Chrome extension slowing Supabase calls locally.** Affects
   dev only.
-- **Delete / retire dev Supabase project** (`wdxgbtwshcmvmiedqjyh`).
-  Abandoned; using prod for everything.
 - **Refresh contact-relationships screenshot in the repo README.**
 - **Clean up 308 latent TS errors incrementally.**
 - **Add `npm run build` step to pre-push workflow.** Vite dev is more
