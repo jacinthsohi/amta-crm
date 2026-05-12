@@ -13,9 +13,11 @@ import {
   LogOut,
   Shield,
   Mail,
+  UserPlus,
 } from "lucide-react";
 import { useAuth } from "@/lib/auth";
 import { useIsAdmin } from "@/features/admin/hooks";
+import { usePendingClaimsCount } from "@/features/admin/alumni-claims-hooks";
 import { cn } from "@/lib/cn";
 import { initialsOf } from "@/lib/format";
 
@@ -34,6 +36,7 @@ const NAV_ITEMS = [
 export function Sidebar({ onSearch }: { onSearch: () => void }) {
   const { contact, user, signOut } = useAuth();
   const { isAdmin } = useIsAdmin();
+  const { data: pendingClaimsCount } = usePendingClaimsCount();
   const navigate = useNavigate();
   const location = useLocation();
 
@@ -121,6 +124,25 @@ export function Sidebar({ onSearch }: { onSearch: () => void }) {
           >
             <Mail size={15} />
             <span>Invitations</span>
+          </NavLink>
+          <NavLink
+            to="/admin/alumni-claims"
+            className={({ isActive }) =>
+              cn(
+                "flex items-center gap-2.5 px-2.5 py-1.5 rounded-md text-sm transition-colors mb-0.5",
+                isActive
+                  ? "bg-maroon-50 text-maroon-700 font-medium"
+                  : "text-zinc-700 hover:bg-zinc-100",
+              )
+            }
+          >
+            <UserPlus size={15} />
+            <span>Alumni claims</span>
+            {pendingClaimsCount && pendingClaimsCount > 0 ? (
+              <span className="ml-auto inline-flex items-center justify-center rounded-full bg-maroon-600 px-1.5 text-[10px] font-medium text-white min-w-[18px] h-[18px]">
+                {pendingClaimsCount}
+              </span>
+            ) : null}
           </NavLink>
           <NavLink
             to="/admin/access"
