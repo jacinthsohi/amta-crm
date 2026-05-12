@@ -31,6 +31,19 @@ import { EventDocumentForm } from "./EventDocumentForm";
 import { ProjectForm } from "@/features/projects/ProjectForm";
 import { InteractionForm } from "@/features/interactions/InteractionForm";
 
+// Type alias for a single staff row, derived from EventWithRelations.staff.
+// Used by the shared row component so we can iterate the same shape from
+// either the Staff or Judges section.
+type StaffEntry = EventWithRelations["staff"][number];
+
+// Predicate for whether a staff entry should appear in the Judges section
+// vs. the Staff section. Case-insensitive on "Judge".
+function isJudge(s: StaffEntry): boolean {
+  return Boolean(
+    s.position && s.position.trim().toLowerCase() === "judge",
+  );
+}
+
 function statusTone(s: EventWithRelations["status"]) {
   if (s === "upcoming") return "success" as const;
   if (s === "in_progress") return "maroon" as const;
@@ -92,6 +105,20 @@ export default function EventDetailPage() {
       <div className="flex-1 overflow-y-auto">
         <Hero event={event} onEdit={() => setEditOpen(true)} />
         <div className="px-8 py-7">
+          {/*
+            Render order is intentional:
+              1. Host programs (tournaments only)
+              2. Staff (non-judge event_staff entries)
+              3. Documents
+              4. Related projects
+              5. Related interactions
+              6. Judges (often hundreds of rows; pushed last so the more
+                 actionable sections above stay scannable without scrolling
+                 past a giant list)
+
+            Future: when judge counts grow, consider a tabbed UI ("Overview"
+            tab + "Judges" tab) to remove the vertical scroll entirely.
+          */}
           {event.event_type === "tournament" && (
             <HostsSection event={event} onAdd={() => setHostOpen(true)} />
           )}
@@ -105,6 +132,7 @@ export default function EventDetailPage() {
             eventId={event.id}
             onAdd={() => setInteractionOpen(true)}
           />
+          <JudgesSection event={event} />
         </div>
       </div>
 
@@ -282,6 +310,19 @@ function HostsSection({
   );
 }
 
+// -----------------------------------------------------------------------------
+// StaffSection — renders ONLY non-judge event_staff entries
+// -----------------------------------------------------------------------------
+// Judges are pulled out into their own section (rendered at the bottom of
+// the page; see <JudgesSection>). Everyone else — Tournament Directors,
+// Tab Directors, Judge Liaisons, AMTA Reps, Volunteers, Hosts, etc. —
+// shows here.
+//
+// Empty-state behavior: if there are no non-judge staff but the event DOES
+// have judges, we still render this section's empty state. That's
+// intentional — admins commonly want to know "we have judges but no
+// tournament director yet" at a glance.
+// -----------------------------------------------------------------------------
 function StaffSection({
   event,
   onAdd,
@@ -289,11 +330,15 @@ function StaffSection({
   event: EventWithRelations;
   onAdd: () => void;
 }) {
-  const navigate = useNavigate();
+  const otherStaff = useMemo(
+    () => event.staff.filter((s) => !isJudge(s)),
+    [event.staff],
+  );
+
   return (
     <Section
       title="Staff"
-      count={event.staff.length}
+      count={otherStaff.length}
       action={
         <button
           onClick={onAdd}
@@ -304,35 +349,73 @@ function StaffSection({
         </button>
       }
     >
-      {event.staff.length === 0 ? (
+      {otherStaff.length === 0 ? (
         <EmptyState>No staff assigned yet.</EmptyState>
       ) : (
-        <div className="space-y-2">
-          {event.staff.map((s) => {
-            const c = s.contact;
-            if (!c) return null;
-            return (
-              <button
-                key={s.id}
-                onClick={() => navigate(`/contacts/${c.id}`)}
-                className="w-full flex items-center justify-between px-3 py-2.5 rounded-md text-left bg-white border border-zinc-200 hover:bg-zinc-50 transition-colors"
-              >
-                <div className="flex items-center gap-3">
-                  <Avatar contact={c} size={28} />
-                  <span className="text-sm font-medium text-zinc-900">
-                    {c.first_name} {c.last_name}
-                  </span>
-                </div>
-                <div className="flex items-center gap-2.5">
-                  <Tag tone="neutral">{s.position}</Tag>
-                  <ChevronRight size={13} className="text-zinc-300" />
-                </div>
-              </button>
-            );
-          })}
-        </div>
+        <StaffList entries={otherStaff} />
       )}
     </Section>
+  );
+}
+
+// -----------------------------------------------------------------------------
+// JudgesSection — renders ONLY event_staff entries with position "Judge"
+// -----------------------------------------------------------------------------
+// Rendered at the BOTTOM of the page (below related interactions) because
+// real tournaments have hundreds of judges and putting them mid-page would
+// push everything else below a huge scroll.
+//
+// No "Add" button here — adding a judge goes through the same
+// EventStaffForm that adds anyone else; the button lives on StaffSection.
+// A future "Add judge" entry point would be a streamlined judge-only form,
+// which is a separate backlog item.
+// -----------------------------------------------------------------------------
+function JudgesSection({ event }: { event: EventWithRelations }) {
+  const judges = useMemo(
+    () => event.staff.filter(isJudge),
+    [event.staff],
+  );
+
+  // Hide the section entirely when there are no judges. Unlike Staff, an
+  // empty Judges section adds little signal value — admins know whether
+  // they've sent invites to judges yet without us prompting them.
+  if (judges.length === 0) return null;
+
+  return (
+    <Section title="Judges" count={judges.length} action={null}>
+      <StaffList entries={judges} />
+    </Section>
+  );
+}
+
+// Shared row layout used by both Staff and Judges sections.
+function StaffList({ entries }: { entries: StaffEntry[] }) {
+  const navigate = useNavigate();
+  return (
+    <div className="space-y-2">
+      {entries.map((s) => {
+        const c = s.contact;
+        if (!c) return null;
+        return (
+          <button
+            key={s.id}
+            onClick={() => navigate(`/contacts/${c.id}`)}
+            className="w-full flex items-center justify-between px-3 py-2.5 rounded-md text-left bg-white border border-zinc-200 hover:bg-zinc-50 transition-colors"
+          >
+            <div className="flex items-center gap-3">
+              <Avatar contact={c} size={28} />
+              <span className="text-sm font-medium text-zinc-900">
+                {c.first_name} {c.last_name}
+              </span>
+            </div>
+            <div className="flex items-center gap-2.5">
+              <Tag tone="neutral">{s.position}</Tag>
+              <ChevronRight size={13} className="text-zinc-300" />
+            </div>
+          </button>
+        );
+      })}
+    </div>
   );
 }
 
