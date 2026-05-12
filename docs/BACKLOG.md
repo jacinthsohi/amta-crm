@@ -115,6 +115,10 @@ Last updated: May 12, 2026
   inauthentic to publish under my name alone.
 - **AI summary staleness.** Known issue, no fix scoped.
 - **Case file DB feature.** Standalone idea, no current pull.
+- **Recover alumni-claims-admin-mvp.md spec.** Referenced in May 11 handoff
+  but not in this repo. Check the original chat session it was written in.
+  Low priority — the feature is built; the spec is only useful for portfolio
+  context.
 
 ---
 
