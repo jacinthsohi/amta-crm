@@ -62,7 +62,7 @@ export function useContacts() {
     queryKey: KEYS.contacts,
     queryFn: async () => {
       const [contactsRes, assignmentsRes, categoriesRes] = await Promise.all([
-        supabase.from("active_contacts").select("*").order("last_name"),
+        supabase.from("active_contacts").select("*").order("first_name").order("last_name"),
         supabase.from("active_contact_category_assignments").select("*"),
         supabase.from("active_contact_categories").select("*"),
       ]);
