@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { Plus, Search, ChevronRight } from "lucide-react";
+import { Plus, Search, ChevronRight, Upload } from "lucide-react";
 import { useContacts, type ContactWithCategories } from "./hooks";
 import { useProgramsLookup } from "@/lib/lookups";
 import { Avatar } from "@/components/Avatar";
@@ -116,7 +116,23 @@ export default function ContactsListPage() {
               Board members, alumni, coaches, donors, and volunteers.
             </p>
           </div>
+          {/*
+            Action row order: Import → Export → New contact.
+            New contact is the primary action (maroon PrimaryButton).
+            Import and Export are bulk operations grouped together with
+            quieter visual weight so they don't compete with the primary.
+            Import comes first because users read left-to-right and the
+            mental flow is "bring data in" before "send data out."
+          */}
           <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => navigate("/contacts/import")}
+              className="inline-flex items-center gap-1.5 px-3 py-2 rounded-md text-xs font-medium text-zinc-700 bg-white border border-zinc-200 hover:bg-zinc-50 transition-colors"
+            >
+              <Upload size={14} />
+              Import CSV
+            </button>
             <ExportCsvButton
               rows={filtered}
               columns={CONTACT_EXPORT_COLUMNS}
