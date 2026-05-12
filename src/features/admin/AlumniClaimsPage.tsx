@@ -3,11 +3,11 @@
 // /admin/alumni-claims
 // =============================================================================
 // View claims submitted via the public alumni signup form. Filter by status.
-// Click a row to open the review modal (not yet built — step 4 of the plan).
+// Click a row to open the review modal.
 //
-// Builds on top of the hooks in alumni-claims-hooks.ts. Modal-based review
-// flow is intentionally deferred to its own step; this page is just the
-// list view so admins can SEE pending claims for the first time.
+// Step 4 wired up: clicking a row sets selectedClaim state, which opens the
+// AlumniClaimReviewModal. Approve/Reject buttons inside the modal currently
+// console.log — actual wiring is steps 5 and 6.
 // =============================================================================
 
 import { useState } from "react";
@@ -16,6 +16,7 @@ import {
   type AlumniClaimRow,
   type AlumniClaimStatus,
 } from "./alumni-claims-hooks";
+import AlumniClaimReviewModal from "./AlumniClaimReviewModal";
 
 type StatusFilter = AlumniClaimStatus | "all";
 
@@ -48,6 +49,9 @@ function relativeTime(iso: string) {
 
 export default function AlumniClaimsPage() {
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("pending");
+  const [selectedClaim, setSelectedClaim] = useState<AlumniClaimRow | null>(
+    null,
+  );
   const { data: claims, isLoading, error } = useAlumniClaims(statusFilter);
 
   return (
@@ -97,9 +101,15 @@ export default function AlumniClaimsPage() {
         ) : !claims || claims.length === 0 ? (
           <EmptyState statusFilter={statusFilter} />
         ) : (
-          <ClaimsTable claims={claims} />
+          <ClaimsTable claims={claims} onSelect={setSelectedClaim} />
         )}
       </section>
+
+      {/* Review modal — opens when a row is clicked */}
+      <AlumniClaimReviewModal
+        claim={selectedClaim}
+        onClose={() => setSelectedClaim(null)}
+      />
     </div>
   );
 }
@@ -107,7 +117,13 @@ export default function AlumniClaimsPage() {
 // -----------------------------------------------------------------------------
 // ClaimsTable
 // -----------------------------------------------------------------------------
-function ClaimsTable({ claims }: { claims: AlumniClaimRow[] }) {
+function ClaimsTable({
+  claims,
+  onSelect,
+}: {
+  claims: AlumniClaimRow[];
+  onSelect: (claim: AlumniClaimRow) => void;
+}) {
   return (
     <div className="overflow-hidden rounded-lg border border-zinc-200 bg-white">
       <table className="w-full text-sm">
@@ -126,11 +142,7 @@ function ClaimsTable({ claims }: { claims: AlumniClaimRow[] }) {
             <tr
               key={claim.id}
               className="cursor-pointer hover:bg-zinc-50"
-              onClick={() => {
-                // Modal opens in step 4. For now, surface a hint so the row
-                // doesn't feel completely dead.
-                console.log("Claim selected:", claim.id);
-              }}
+              onClick={() => onSelect(claim)}
             >
               <td className="px-4 py-3 text-zinc-600">
                 {relativeTime(claim.created_at)}
