@@ -9,15 +9,23 @@
 //   Step 2: Map columns + bulk options — admin maps CSV columns to contact
 //           fields, picks categories to tag rows with, optionally picks
 //           an event to add rows to. Preview table shows first 5 rows.
-//   Step 3: Processing — TODO (next commit)
-//   Step 4: Result — TODO (next commit)
+//   Step 3: Processing — runs the import row-by-row. Dupe check by email,
+//           insert contact (or update existing), add categories, add to
+//           event. Shows progress, collects per-row errors.
+//   Step 4: Result — imported / updated / errored counts with details.
 //
 // Spec: docs/specs/contacts-csv-import-mvp.md
 // =============================================================================
 
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useRef } from "react";
 import { useNavigate } from "react-router-dom";
-import { Upload, AlertCircle, ArrowLeft } from "lucide-react";
+import {
+  Upload,
+  AlertCircle,
+  ArrowLeft,
+  CheckCircle2,
+  RefreshCw,
+} from "lucide-react";
 import Papa from "papaparse";
 import { supabase } from "@/lib/supabase";
 
@@ -60,6 +68,28 @@ interface EventRow {
   start_date: string | null;
 }
 
+// Submission configuration passed from MapStep into ProcessingStep.
+interface ImportConfig {
+  parsed: ParsedCsv;
+  mapping: Mapping;
+  categoryIds: string[];
+  eventId: string | null;
+  eventPosition: string;
+}
+
+// Result of a single row's processing.
+type RowOutcome =
+  | { kind: "imported"; rowIndex: number; name: string }
+  | { kind: "updated"; rowIndex: number; name: string }
+  | { kind: "errored"; rowIndex: number; name: string; reason: string };
+
+interface ImportResult {
+  outcomes: RowOutcome[];
+  imported: number;
+  updated: number;
+  errored: number;
+}
+
 type Step = "upload" | "map" | "processing" | "result";
 
 export default function ContactsImportPage() {
@@ -68,6 +98,8 @@ export default function ContactsImportPage() {
   const [parsed, setParsed] = useState<ParsedCsv | null>(null);
   const [parseError, setParseError] = useState<string | null>(null);
   const [isDragging, setIsDragging] = useState(false);
+  const [importConfig, setImportConfig] = useState<ImportConfig | null>(null);
+  const [importResult, setImportResult] = useState<ImportResult | null>(null);
 
   // -----------------------------------------------------------------------
   // CSV parsing
@@ -136,6 +168,14 @@ export default function ContactsImportPage() {
     if (file) handleFile(file);
   }
 
+  function resetAll() {
+    setParsed(null);
+    setImportConfig(null);
+    setImportResult(null);
+    setParseError(null);
+    setStep("upload");
+  }
+
   return (
     <div className="mx-auto max-w-3xl px-6 py-8">
       <button
@@ -187,23 +227,29 @@ export default function ContactsImportPage() {
             setParsed(null);
             setStep("upload");
           }}
-          onSubmit={() => setStep("processing")}
+          onSubmit={(config) => {
+            setImportConfig(config);
+            setStep("processing");
+          }}
         />
       )}
 
-      {step === "processing" && (
-        <section className="mt-6 rounded-md border border-dashed border-zinc-300 bg-zinc-50 px-4 py-12 text-center text-sm text-zinc-500">
-          Processing step coming in the next commit.
-          <div className="mt-3">
-            <button
-              type="button"
-              onClick={() => setStep("map")}
-              className="text-xs text-zinc-500 hover:text-zinc-700"
-            >
-              ← Back to mapping
-            </button>
-          </div>
-        </section>
+      {step === "processing" && importConfig && (
+        <ProcessingStep
+          config={importConfig}
+          onComplete={(result) => {
+            setImportResult(result);
+            setStep("result");
+          }}
+        />
+      )}
+
+      {step === "result" && importResult && (
+        <ResultStep
+          result={importResult}
+          onDone={() => navigate("/contacts")}
+          onImportAnother={resetAll}
+        />
       )}
     </div>
   );
@@ -219,11 +265,10 @@ function MapStep({
 }: {
   parsed: ParsedCsv;
   onBack: () => void;
-  onSubmit: () => void;
+  onSubmit: (config: ImportConfig) => void;
 }) {
   // ----- Mapping state -----
   // Auto-suggest mappings by slugged exact match between header and field.
-  // E.g. "First Name" → slug "first_name" → matches field "first_name".
   const initialMapping: Mapping = useMemo(() => {
     const slug = (s: string) =>
       s.toLowerCase().trim().replace(/[\s-]+/g, "_");
@@ -246,7 +291,7 @@ function MapStep({
   const [selectedEventId, setSelectedEventId] = useState<string>("");
   const [eventPosition, setEventPosition] = useState("Judge");
 
-  // ----- Lookup data (categories, events) -----
+  // ----- Lookup data -----
   const [categories, setCategories] = useState<CategoryRow[]>([]);
   const [events, setEvents] = useState<EventRow[]>([]);
   const [lookupError, setLookupError] = useState<string | null>(null);
@@ -272,8 +317,6 @@ function MapStep({
       ]);
       if (cancelled) return;
       if (catsRes.error || eventsRes.error) {
-        // Log specific errors so we can debug from the console if something
-        // breaks; user gets a generic message.
         if (catsRes.error) console.error("Categories lookup failed:", catsRes.error);
         if (eventsRes.error) console.error("Events lookup failed:", eventsRes.error);
         setLookupError(
@@ -289,7 +332,6 @@ function MapStep({
     };
   }, []);
 
-  // ----- Validation -----
   const missingRequired = REQUIRED_FIELDS.filter((f) => !mapping[f]);
   const canSubmit =
     missingRequired.length === 0 && (!addToEvent || selectedEventId !== "");
@@ -300,6 +342,16 @@ function MapStep({
       if (next.has(id)) next.delete(id);
       else next.add(id);
       return next;
+    });
+  }
+
+  function handleSubmit() {
+    onSubmit({
+      parsed,
+      mapping,
+      categoryIds: Array.from(selectedCategoryIds),
+      eventId: addToEvent ? selectedEventId : null,
+      eventPosition: eventPosition.trim() || "Judge",
     });
   }
 
@@ -394,7 +446,6 @@ function MapStep({
           existing contact instead of creating a duplicate.
         </p>
 
-        {/* Category multi-select */}
         <div className="mt-4">
           <p className="mb-2 text-xs font-medium text-zinc-700">
             Tag as category (optional)
@@ -424,7 +475,6 @@ function MapStep({
           </div>
         </div>
 
-        {/* Event toggle + dropdown */}
         <div className="mt-5 border-t border-zinc-100 pt-4">
           <label className="flex items-center gap-2 text-sm">
             <input
@@ -550,7 +600,7 @@ function MapStep({
           )}
           <button
             type="button"
-            onClick={onSubmit}
+            onClick={handleSubmit}
             disabled={!canSubmit}
             className="rounded-md bg-maroon-700 px-4 py-1.5 text-sm font-medium text-white hover:bg-maroon-800 disabled:cursor-not-allowed disabled:opacity-50"
           >
@@ -560,6 +610,471 @@ function MapStep({
         </div>
       </div>
     </section>
+  );
+}
+
+// =============================================================================
+// ProcessingStep — the actual import work
+// =============================================================================
+//
+// Sequential row-by-row processing. Sequential (not parallel) is intentional:
+//   - Lets us track progress accurately for the UI
+//   - Lets us detect within-CSV duplicate emails (row N matches row N-3)
+//   - Avoids hammering Supabase with 500 parallel requests
+//
+// Per row, we:
+//   1. Validate (required fields present, email format)
+//   2. Check if email already exists in contacts (case-insensitive)
+//   3. If exists → add categories + event_staff to existing record (skip
+//      duplicates of those associations)
+//   4. If new → insert contact + categories + event_staff
+//   5. Either way, record the outcome
+//
+// If any single row's DB call fails, we collect the error and continue to the
+// next row. We never throw out of the loop — partial success is the design.
+// =============================================================================
+function ProcessingStep({
+  config,
+  onComplete,
+}: {
+  config: ImportConfig;
+  onComplete: (result: ImportResult) => void;
+}) {
+  const [progress, setProgress] = useState(0);
+  const total = config.parsed.rows.length;
+  // Guard against StrictMode double-mount in dev kicking off the import twice.
+  const startedRef = useRef(false);
+
+  useEffect(() => {
+    if (startedRef.current) return;
+    startedRef.current = true;
+
+    let cancelled = false;
+    (async () => {
+      const result = await runImport(config, (n) => {
+        if (!cancelled) setProgress(n);
+      });
+      if (!cancelled) onComplete(result);
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const pct = total === 0 ? 0 : Math.round((progress / total) * 100);
+
+  return (
+    <section className="mt-6 rounded-lg border border-zinc-200 bg-white p-8">
+      <div className="flex flex-col items-center text-center">
+        <RefreshCw className="mb-4 animate-spin text-maroon-700" size={28} />
+        <p className="text-sm font-medium text-zinc-900">
+          Importing… {progress} of {total}
+        </p>
+        <p className="mt-1 text-xs text-zinc-500">
+          This shouldn't take long. Please don't close this tab.
+        </p>
+        <div className="mt-4 h-1.5 w-full max-w-sm overflow-hidden rounded-full bg-zinc-100">
+          <div
+            className="h-full bg-maroon-700 transition-all duration-200"
+            style={{ width: `${pct}%` }}
+          />
+        </div>
+      </div>
+    </section>
+  );
+}
+
+// -----------------------------------------------------------------------------
+// runImport — the actual processing engine
+// -----------------------------------------------------------------------------
+async function runImport(
+  config: ImportConfig,
+  onProgress: (n: number) => void,
+): Promise<ImportResult> {
+  const { parsed, mapping, categoryIds, eventId, eventPosition } = config;
+  const outcomes: RowOutcome[] = [];
+  // Track emails we've already processed *within this import* to catch
+  // within-CSV duplicates. We fail the second occurrence with a specific reason.
+  const seenInThisImport = new Set<string>();
+
+  for (let i = 0; i < parsed.rows.length; i++) {
+    const row = parsed.rows[i];
+    const csvRowNumber = i + 2; // 1-indexed, +1 for header row → matches what user sees
+
+    const firstName = mapping.first_name ? row[mapping.first_name]?.trim() : "";
+    const lastName = mapping.last_name ? row[mapping.last_name]?.trim() : "";
+    const email = mapping.email
+      ? row[mapping.email]?.trim().toLowerCase()
+      : "";
+    const phone = mapping.phone ? row[mapping.phone]?.trim() : "";
+    const notes = mapping.notes ? row[mapping.notes]?.trim() : "";
+
+    const displayName =
+      [firstName, lastName].filter(Boolean).join(" ") || `Row ${csvRowNumber}`;
+
+    // -----------------------------------------------------------------
+    // Row-level validation
+    // -----------------------------------------------------------------
+    if (!firstName) {
+      outcomes.push({
+        kind: "errored",
+        rowIndex: csvRowNumber,
+        name: displayName,
+        reason: "Missing first name",
+      });
+      onProgress(i + 1);
+      continue;
+    }
+    if (!lastName) {
+      outcomes.push({
+        kind: "errored",
+        rowIndex: csvRowNumber,
+        name: displayName,
+        reason: "Missing last name",
+      });
+      onProgress(i + 1);
+      continue;
+    }
+    if (!email) {
+      outcomes.push({
+        kind: "errored",
+        rowIndex: csvRowNumber,
+        name: displayName,
+        reason: "Missing email",
+      });
+      onProgress(i + 1);
+      continue;
+    }
+    if (!/^\S+@\S+\.\S+$/.test(email)) {
+      outcomes.push({
+        kind: "errored",
+        rowIndex: csvRowNumber,
+        name: displayName,
+        reason: `Invalid email format: ${email}`,
+      });
+      onProgress(i + 1);
+      continue;
+    }
+
+    // Catch within-CSV duplicate emails before hitting the DB.
+    if (seenInThisImport.has(email)) {
+      outcomes.push({
+        kind: "errored",
+        rowIndex: csvRowNumber,
+        name: displayName,
+        reason: `Duplicate email in this CSV: ${email}`,
+      });
+      onProgress(i + 1);
+      continue;
+    }
+    seenInThisImport.add(email);
+
+    // -----------------------------------------------------------------
+    // Dupe check against existing contacts
+    // -----------------------------------------------------------------
+    const { data: existing, error: lookupErr } = await supabase
+      .from("contacts")
+      .select("id")
+      .ilike("email", email)
+      .is("deleted_at", null)
+      .maybeSingle();
+
+    if (lookupErr) {
+      outcomes.push({
+        kind: "errored",
+        rowIndex: csvRowNumber,
+        name: displayName,
+        reason: `Lookup failed: ${lookupErr.message}`,
+      });
+      onProgress(i + 1);
+      continue;
+    }
+
+    if (existing) {
+      // -------------------------------------------------------------
+      // Existing contact → add categories + event_staff (idempotent)
+      // -------------------------------------------------------------
+      const addError = await addAssociations({
+        contactId: existing.id,
+        categoryIds,
+        eventId,
+        eventPosition,
+      });
+      if (addError) {
+        outcomes.push({
+          kind: "errored",
+          rowIndex: csvRowNumber,
+          name: displayName,
+          reason: addError,
+        });
+      } else {
+        outcomes.push({
+          kind: "updated",
+          rowIndex: csvRowNumber,
+          name: displayName,
+        });
+      }
+      onProgress(i + 1);
+      continue;
+    }
+
+    // -----------------------------------------------------------------
+    // New contact → insert + categories + event_staff
+    // -----------------------------------------------------------------
+    const { data: inserted, error: insertErr } = await supabase
+      .from("contacts")
+      .insert({
+        first_name: firstName,
+        last_name: lastName,
+        email,
+        phone: phone || null,
+        notes: notes || null,
+      })
+      .select("id")
+      .single();
+
+    if (insertErr || !inserted) {
+      outcomes.push({
+        kind: "errored",
+        rowIndex: csvRowNumber,
+        name: displayName,
+        reason: insertErr?.message ?? "Insert failed (no row returned)",
+      });
+      onProgress(i + 1);
+      continue;
+    }
+
+    const addError = await addAssociations({
+      contactId: inserted.id,
+      categoryIds,
+      eventId,
+      eventPosition,
+    });
+    if (addError) {
+      // Contact was created but associations partially failed.
+      // We surface as errored so admin notices; the contact still exists.
+      outcomes.push({
+        kind: "errored",
+        rowIndex: csvRowNumber,
+        name: displayName,
+        reason: `Contact created but associations failed: ${addError}`,
+      });
+    } else {
+      outcomes.push({
+        kind: "imported",
+        rowIndex: csvRowNumber,
+        name: displayName,
+      });
+    }
+    onProgress(i + 1);
+  }
+
+  return {
+    outcomes,
+    imported: outcomes.filter((o) => o.kind === "imported").length,
+    updated: outcomes.filter((o) => o.kind === "updated").length,
+    errored: outcomes.filter((o) => o.kind === "errored").length,
+  };
+}
+
+// -----------------------------------------------------------------------------
+// addAssociations — add categories + event_staff to a contact, idempotently
+// -----------------------------------------------------------------------------
+// Returns null on success, or a user-facing error message string on failure.
+// Idempotent: if an association already exists, skip it silently. We achieve
+// this by querying for existing associations first, then only inserting the
+// missing ones. Race conditions are possible (two imports happening
+// simultaneously) but acceptable for a single-admin tool.
+// -----------------------------------------------------------------------------
+async function addAssociations({
+  contactId,
+  categoryIds,
+  eventId,
+  eventPosition,
+}: {
+  contactId: string;
+  categoryIds: string[];
+  eventId: string | null;
+  eventPosition: string;
+}): Promise<string | null> {
+  // ---- Categories ----
+  if (categoryIds.length > 0) {
+    const { data: existing, error: lookupErr } = await supabase
+      .from("contact_category_assignments")
+      .select("category_id")
+      .eq("contact_id", contactId)
+      .is("deleted_at", null);
+    if (lookupErr) {
+      return `Failed to check existing categories: ${lookupErr.message}`;
+    }
+    const existingIds = new Set(
+      (existing ?? []).map((a) => a.category_id as string),
+    );
+    const toInsert = categoryIds
+      .filter((id) => !existingIds.has(id))
+      .map((id) => ({ contact_id: contactId, category_id: id }));
+    if (toInsert.length > 0) {
+      const { error: insertErr } = await supabase
+        .from("contact_category_assignments")
+        .insert(toInsert);
+      if (insertErr) {
+        return `Failed to add categories: ${insertErr.message}`;
+      }
+    }
+  }
+
+  // ---- Event staff ----
+  if (eventId) {
+    const { data: existing, error: lookupErr } = await supabase
+      .from("event_staff")
+      .select("id")
+      .eq("contact_id", contactId)
+      .eq("event_id", eventId)
+      .is("deleted_at", null)
+      .maybeSingle();
+    if (lookupErr) {
+      return `Failed to check existing event assignment: ${lookupErr.message}`;
+    }
+    if (!existing) {
+      const { error: insertErr } = await supabase.from("event_staff").insert({
+        contact_id: contactId,
+        event_id: eventId,
+        position: eventPosition,
+      });
+      if (insertErr) {
+        return `Failed to add to event: ${insertErr.message}`;
+      }
+    }
+  }
+
+  return null;
+}
+
+// =============================================================================
+// ResultStep — imported / updated / errored summary
+// =============================================================================
+function ResultStep({
+  result,
+  onDone,
+  onImportAnother,
+}: {
+  result: ImportResult;
+  onDone: () => void;
+  onImportAnother: () => void;
+}) {
+  const errors = result.outcomes.filter(
+    (o): o is Extract<RowOutcome, { kind: "errored" }> => o.kind === "errored",
+  );
+
+  return (
+    <section className="mt-6 space-y-6">
+      <div className="flex items-start gap-3 rounded-lg border border-emerald-200 bg-emerald-50 p-4">
+        <CheckCircle2
+          className="mt-0.5 flex-shrink-0 text-emerald-600"
+          size={20}
+        />
+        <div>
+          <p className="text-sm font-medium text-emerald-900">
+            Import complete
+          </p>
+          <p className="mt-0.5 text-xs text-emerald-700">
+            {result.imported + result.updated} of {result.outcomes.length}{" "}
+            rows processed successfully.
+          </p>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-3 gap-3">
+        <StatCard
+          label="Imported as new"
+          value={result.imported}
+          tone="emerald"
+        />
+        <StatCard
+          label="Updated existing"
+          value={result.updated}
+          tone="blue"
+        />
+        <StatCard label="Errored" value={result.errored} tone="rose" />
+      </div>
+
+      {errors.length > 0 && (
+        <div className="rounded-lg border border-zinc-200 bg-white p-5">
+          <h3 className="text-sm font-semibold text-zinc-900">
+            Errors ({errors.length})
+          </h3>
+          <p className="mt-1 text-xs text-zinc-500">
+            These rows weren't imported. You can fix the issues and re-run
+            the import with just those rows.
+          </p>
+          <div className="mt-3 overflow-x-auto">
+            <table className="w-full text-xs">
+              <thead className="bg-zinc-50 text-left text-zinc-500">
+                <tr>
+                  <th className="px-2 py-1.5 font-medium">Row</th>
+                  <th className="px-2 py-1.5 font-medium">Name</th>
+                  <th className="px-2 py-1.5 font-medium">Reason</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-zinc-100">
+                {errors.map((e) => (
+                  <tr key={e.rowIndex}>
+                    <td className="px-2 py-1.5 text-zinc-500">
+                      {e.rowIndex}
+                    </td>
+                    <td className="px-2 py-1.5 text-zinc-900">{e.name}</td>
+                    <td className="px-2 py-1.5 text-rose-700">{e.reason}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      <div className="flex items-center justify-end gap-2 border-t border-zinc-200 pt-4">
+        <button
+          type="button"
+          onClick={onImportAnother}
+          className="rounded-md border border-zinc-300 px-3.5 py-1.5 text-sm font-medium text-zinc-700 hover:bg-zinc-100"
+        >
+          Import another file
+        </button>
+        <button
+          type="button"
+          onClick={onDone}
+          className="rounded-md bg-maroon-700 px-4 py-1.5 text-sm font-medium text-white hover:bg-maroon-800"
+        >
+          Done — back to contacts
+        </button>
+      </div>
+    </section>
+  );
+}
+
+function StatCard({
+  label,
+  value,
+  tone,
+}: {
+  label: string;
+  value: number;
+  tone: "emerald" | "blue" | "rose";
+}) {
+  const toneClasses: Record<typeof tone, string> = {
+    emerald: "border-emerald-200 bg-emerald-50 text-emerald-700",
+    blue: "border-blue-200 bg-blue-50 text-blue-700",
+    rose: "border-rose-200 bg-rose-50 text-rose-700",
+  };
+  return (
+    <div
+      className={`rounded-lg border ${toneClasses[tone]} px-4 py-3 text-center`}
+    >
+      <p className="text-2xl font-semibold">{value}</p>
+      <p className="mt-0.5 text-xs">{label}</p>
+    </div>
   );
 }
 
