@@ -23,6 +23,7 @@ import AdminGate from "@/features/admin/AdminGate";
 import AccessPage from "@/features/admin/AccessPage";
 import AlumniClaimsPage from "@/features/admin/AlumniClaimsPage";
 import ContactDetailPage from "@/features/contacts/ContactDetailPage";
+import ContactsImportPage from "@/features/contacts/ContactsImportPage";
 import ProgramsListPage from "@/features/programs/ProgramsListPage";
 import ProgramDetailPage from "@/features/programs/ProgramDetailPage";
 import CommitteesListPage from "@/features/committees/CommitteesListPage";
@@ -97,6 +98,7 @@ export default function App() {
               }
             >
               <Route path="contacts" element={<ContactsListPage />} />
+		<Route path="contacts/import" element={<ContactsImportPage />} />
               <Route path="contacts/:id" element={<ContactDetailPage />} />
               <Route path="programs" element={<ProgramsListPage />} />
               <Route path="programs/:id" element={<ProgramDetailPage />} />
