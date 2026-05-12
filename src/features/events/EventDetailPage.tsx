@@ -10,6 +10,7 @@ import {
   FileText,
   GraduationCap,
   FolderKanban,
+  Upload,
 } from "lucide-react";
 import {
   useEvent,
@@ -103,7 +104,13 @@ export default function EventDetailPage() {
       </div>
 
       <div className="flex-1 overflow-y-auto">
-        <Hero event={event} onEdit={() => setEditOpen(true)} />
+        <Hero
+          event={event}
+          onEdit={() => setEditOpen(true)}
+          onAddJudges={() =>
+            navigate(`/contacts/import?eventId=${event.id}`)
+          }
+        />
         <div className="px-8 py-7">
           {/*
             Render order is intentional:
@@ -171,9 +178,11 @@ export default function EventDetailPage() {
 function Hero({
   event: e,
   onEdit,
+  onAddJudges,
 }: {
   event: EventWithRelations;
   onEdit: () => void;
+  onAddJudges: () => void;
 }) {
   const navigate = useNavigate();
   const banner =
@@ -232,12 +241,30 @@ function Hero({
               )}
             </div>
           </div>
-          <button
-            onClick={onEdit}
-            className="px-3 py-1.5 rounded-md text-xs font-medium border border-zinc-200 text-zinc-700 bg-white hover:bg-zinc-50 transition-colors"
-          >
-            Edit
-          </button>
+          {/*
+            Action buttons. "Add judges" is the flagship workflow for
+            tournament events — it deep-links into the CSV import flow with
+            this event pre-selected. Only show on tournaments; board
+            meetings don't have judges. Matches Edit's visual weight (small,
+            outlined) so neither competes for attention.
+          */}
+          <div className="flex items-center gap-2 shrink-0">
+            {e.event_type === "tournament" && (
+              <button
+                onClick={onAddJudges}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium border border-zinc-200 text-zinc-700 bg-white hover:bg-zinc-50 transition-colors"
+              >
+                <Upload size={13} />
+                Add judges
+              </button>
+            )}
+            <button
+              onClick={onEdit}
+              className="px-3 py-1.5 rounded-md text-xs font-medium border border-zinc-200 text-zinc-700 bg-white hover:bg-zinc-50 transition-colors"
+            >
+              Edit
+            </button>
+          </div>
         </div>
         {e.description && (
           <div className="mt-5 p-3 rounded-md text-sm text-zinc-700 leading-relaxed bg-zinc-50 border border-zinc-100">

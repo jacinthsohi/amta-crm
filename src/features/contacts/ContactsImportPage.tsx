@@ -14,11 +14,15 @@
 //           event. Shows progress, collects per-row errors.
 //   Step 4: Result — imported / updated / errored counts with details.
 //
+// Deep-linking: when arriving from an Event detail page's "Add judges"
+// button, the URL contains ?eventId=xyz. We pre-select that event and
+// auto-check "Add to event" so the admin can skip straight to uploading.
+//
 // Spec: docs/specs/contacts-csv-import-mvp.md
 // =============================================================================
 
 import { useState, useEffect, useMemo, useRef } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import {
   Upload,
   AlertCircle,
@@ -94,6 +98,13 @@ type Step = "upload" | "map" | "processing" | "result";
 
 export default function ContactsImportPage() {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  // Pre-selected event from the URL (deep-link from Event detail page).
+  // Null if not present or malformed. We don't validate the UUID format
+  // here — if the eventId doesn't match any event in the lookback window,
+  // MapStep silently falls back to no preselect.
+  const preselectedEventId = searchParams.get("eventId");
+
   const [step, setStep] = useState<Step>("upload");
   const [parsed, setParsed] = useState<ParsedCsv | null>(null);
   const [parseError, setParseError] = useState<string | null>(null);
@@ -223,6 +234,7 @@ export default function ContactsImportPage() {
       {step === "map" && parsed && (
         <MapStep
           parsed={parsed}
+          preselectedEventId={preselectedEventId}
           onBack={() => {
             setParsed(null);
             setStep("upload");
@@ -260,10 +272,12 @@ export default function ContactsImportPage() {
 // =============================================================================
 function MapStep({
   parsed,
+  preselectedEventId,
   onBack,
   onSubmit,
 }: {
   parsed: ParsedCsv;
+  preselectedEventId: string | null;
   onBack: () => void;
   onSubmit: (config: ImportConfig) => void;
 }) {
@@ -287,8 +301,13 @@ function MapStep({
   const [selectedCategoryIds, setSelectedCategoryIds] = useState<Set<string>>(
     new Set(),
   );
-  const [addToEvent, setAddToEvent] = useState(false);
-  const [selectedEventId, setSelectedEventId] = useState<string>("");
+  // If we arrived here via a deep link from an Event page, auto-enable the
+  // "Add all contacts to an event" toggle and preselect the event. Admin
+  // can still uncheck or change their mind.
+  const [addToEvent, setAddToEvent] = useState(Boolean(preselectedEventId));
+  const [selectedEventId, setSelectedEventId] = useState<string>(
+    preselectedEventId ?? "",
+  );
   const [eventPosition, setEventPosition] = useState("Judge");
 
   // ----- Lookup data -----
@@ -326,15 +345,36 @@ function MapStep({
       }
       setCategories(catsRes.data ?? []);
       setEvents((eventsRes.data ?? []) as EventRow[]);
+
+      // If the URL preselected an event that ISN'T in the lookback window
+      // (e.g. an old event the admin clicked from), silently un-preselect
+      // rather than leaving the UI in a broken state with a phantom value.
+      if (
+        preselectedEventId &&
+        !(eventsRes.data ?? []).some((ev) => ev.id === preselectedEventId)
+      ) {
+        setSelectedEventId("");
+        setAddToEvent(false);
+      }
     })();
     return () => {
       cancelled = true;
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const missingRequired = REQUIRED_FIELDS.filter((f) => !mapping[f]);
   const canSubmit =
     missingRequired.length === 0 && (!addToEvent || selectedEventId !== "");
+
+  // Find the preselected event's display name for the confirmation banner.
+  const preselectedEvent = useMemo(
+    () =>
+      preselectedEventId
+        ? events.find((ev) => ev.id === preselectedEventId)
+        : null,
+    [events, preselectedEventId],
+  );
 
   function toggleCategory(id: string) {
     setSelectedCategoryIds((prev) => {
@@ -377,6 +417,27 @@ function MapStep({
           </button>
         </div>
       </div>
+
+      {/* Pre-fill confirmation banner. Only shown when we successfully
+          resolved a preselected event from the URL — appears between file
+          summary and column mapping. */}
+      {preselectedEvent && addToEvent && selectedEventId === preselectedEvent.id && (
+        <div className="flex items-start gap-2 rounded-md border border-maroon-200 bg-maroon-50 px-3 py-2 text-sm text-maroon-900">
+          <CheckCircle2
+            size={16}
+            className="mt-0.5 flex-shrink-0 text-maroon-700"
+          />
+          <div>
+            <p className="font-medium">
+              Adding contacts to: {preselectedEvent.name}
+            </p>
+            <p className="mt-0.5 text-xs text-maroon-700">
+              All imported contacts will be assigned as "Judge" to this event.
+              You can change this below.
+            </p>
+          </div>
+        </div>
+      )}
 
       {lookupError && (
         <div className="flex items-start gap-2 rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">
