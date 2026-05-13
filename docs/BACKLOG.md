@@ -13,30 +13,61 @@ handoff docs.
 - 💭 DESIGN DISCUSSIONS — open product questions, no clear shape yet
 - ✅ SHIPPED — done, kept here for momentum / portfolio context
 
-Last updated: May 12, 2026 (evening session, post-dinner additions)
+Last updated: May 13, 2026 (morning — post is_test ship)
 
 ---
 
 ## ✅ Recently shipped
+
+- **🧪 Test-data infrastructure via Test category** (May 13, 2026)
+  - Reuses existing categories infrastructure rather than adding a column
+    (admin tags contacts with "Test" category, no schema migration needed
+    for contacts).
+  - 5 contacts seeded into the Test category: Mallory, Mikey, Molly, Monty
+    Midlander; Mary Mocker.
+  - New shared helper at `src/lib/test-data.ts`: constant
+    `TEST_CATEGORY_NAME = "Test"`, `isTestContact()` predicate,
+    `getTestContactIds()` async fetcher, `excludeTestContacts()` query
+    wrapper, plus `shouldShowTestData()` / `setShowTestData()` for the
+    localStorage toggle.
+  - Contacts list (`src/features/contacts/hooks.ts`) filters out test
+    contacts by default. Detail page deliberately does not filter — admin
+    navigated there intentionally and the Test category chip is the
+    visible signal.
+  - Admin UI on `/contacts`: muted "Show test data" checkbox below the
+    filter row. Persists via localStorage, no Settings page needed yet.
+  - Ask AI server-side filter (`api/ask.ts`): test contacts always
+    excluded from `search_contacts` and `get_committee_members` tools.
+    Cached per-request inside the agentic loop. Direct lookups
+    (`get_contact_details`) intentionally bypass the filter. The
+    server-side filter is UNCONDITIONAL — does NOT respect the
+    client-side toggle, since AI outputs are often shared/forwarded
+    externally and have higher leakage cost than admin UI views.
+  - Programs `is_test` deliberately punted (icebox). Only 1 test program
+    (Midlands State) means the +1 in stats is documented and acceptable.
+  - Real-data verified in prod: test contacts hidden in list and AI,
+    visible with toggle in UI, "Tell me about Mary Mocker" → Claude
+    correctly says she doesn't exist (filtered server-side regardless of
+    toggle), real-contact AI queries still work normally.
+  - Unblocks: KPI / Data dashboard.
 
 - **Programs geographic data populated** (May 12, 2026)
   - Added `country text NOT NULL DEFAULT 'USA'` column to `programs`
   - Updated city, state, website, country for 483 of 484 programs from
     a curated CSV dataset
   - Breakdown: 479 USA / 4 Canada / 1 South Korea
-  - Test Program row skipped — will be flagged when `is_test` ships
+  - Test Program row skipped — to be cleaned up via Test category later
   - Unblocks the US state heatmap on the upcoming `/data` dashboard
   - Migration: `migrations/20260512_programs_geo_data.sql`
 - **"Add judges" deep-link flow on Event detail page** (May 12, 2026)
-  - "Add judges" button next to Edit in Event detail header
-  - Navigates to `/contacts/import?eventId={id}` with deep-link state
-  - Auto-checks "Add to event", pre-selects event, defaults position to
-    "Judge", pre-selects the Judge category chip
-  - Contextual page reframing; header alias auto-mapping; CSS overflow
-    fix for long Google Form headers
+  - "Add judges" button on tournament event headers
+  - Deep-link with `?eventId={id}`; auto-checks event association,
+    pre-selects "Judge" position and category
+  - Contextual page reframing, header alias auto-mapping, CSS overflow fix
 - **Contacts CSV import flow** (May 12, 2026)
-  - 4-step wizard at `/contacts/import`: upload, map, processing, result
-  - Validated with 97-row Claremont CSV (31 had emails, 66 skipped)
+  - 4-step wizard at `/contacts/import`
+  - Validated with 97-row Claremont CSV (31 imported, 66 skipped due to
+    missing email)
   - Spec: `docs/specs/contacts-csv-import-mvp.md`
 - **Judges separated from Staff on Event detail page** (May 12, 2026)
 - **Alumni claims admin flow Phase 2 complete** (May 11–12, 2026)
@@ -94,30 +125,6 @@ Last updated: May 12, 2026 (evening session, post-dinner additions)
 
 ## 🟡 MEDIUM
 
-- **🧪 Test-data infrastructure: `is_test` flag on programs and contacts.**
-  No clean way to test features without polluting real stats. Ship
-  BEFORE the KPI dashboard.
-  
-  **Schema:** `is_test boolean NOT NULL DEFAULT false` on programs +
-  contacts. Backfill: three known test contacts + Test Program row
-  (id `84e894f3-62e5-4802-86cc-fc366e621f6a`, deliberately skipped
-  in the May 12 geo migration). Create Midlands State University as
-  `is_test = true`.
-  
-  **Surfaces that must filter `is_test = false`:**
-  - Stats / counts (dashboard, Home widgets) — never include test
-  - List pages — default exclude; settings toggle to show
-  - Detail pages — show with "TEST" badge
-  - AI features (Ask AI, summaries, briefs) — never include test
-  - CSV export — include `is_test` as a column
-  - CSV import — new rows default to false
-  
-  **UI:** TEST badge (zinc-100 bg, zinc-700 text), settings toggle,
-  optional `/admin/test-data` route.
-  
-  **Scope:** 2-3 hours focused. Migration + backfill + list filters +
-  stats filters + AI filters + UI + test pass.
-
 - **🧾 Export "all" vs "current view" + upcoming pagination for
   Contacts.** Today exports = `rows={filtered}`. Pagination is coming;
   the mental model needs to be decided before that ships.
@@ -145,9 +152,10 @@ Last updated: May 12, 2026 (evening session, post-dinner additions)
 
 - **KPI / Data dashboard at `/data`.** 5 metric cards: Active programs,
   Active alumni, Active board members, Pending invitations, Recent
-  contact additions. Pre-work: (1) populate `board_terms` table
-  (currently empty); (2) ship `is_test` first. Geo data DONE — heatmap
-  unblocked.
+  contact additions. Pre-work: `board_terms` table currently empty.
+  `is_test` infrastructure DONE — dashboard can be built filtering on
+  Test category from day one. Geo data DONE — heatmap unblocked.
+  **NEXT UP.**
 
 - **Admin data-cleanup / dupe-merge tool.** Heuristic dupe detection
   (email match, name + email-domain, similar names + shared program).
@@ -202,6 +210,14 @@ Last updated: May 12, 2026 (evening session, post-dinner additions)
 ---
 
 ## 🟢 LOW
+
+- **`api/meeting-brief.ts` test-data filter follow-up.** When `is_test`
+  shipped (May 13), we deliberately scoped out `meeting-brief.ts`
+  because the feature is rarely used (portfolio piece) and we wanted to
+  ship the higher-leverage Ask AI filter first. If meeting-brief gets
+  real usage, add the same `loadTestContactIds()` + per-tool filter
+  pattern that's in `api/ask.ts`. Probably 20-30 min, easy to mirror
+  from the ask.ts changes.
 
 - **Standardize button heights across action rows.** Visible on
   Programs: ExportCsvButton (`px-2.5 py-1.5 text-sm`) is shorter than
@@ -299,6 +315,12 @@ Last updated: May 12, 2026 (evening session, post-dinner additions)
   annual/quarterly/event-tied ones; ignore the ephemeral or
   confidential ones.
   
+  **Important reframe (May 12, end of session):** AMTA uses Notion as
+  internal knowledge base. Playbooks / how-tos / runbooks belong there.
+  Some marketing-style alumni emails may still make sense to log in CRM
+  for the "audience context" piece, but the broader playbook framing
+  pulls toward Notion. Parking-lotted as a result.
+  
   **Three threads in the original ask, separated:**
   
   *Thread 1: Richer Interaction records.* Today probably
@@ -332,57 +354,30 @@ Last updated: May 12, 2026 (evening session, post-dinner additions)
      file attachment, formatted body, optional audience reference
      (category / committee / event). One Interaction can be a
      broadcast. Appears on each audience member's contact page.
-     - Pros: smallest change; reuses existing concepts; fits curation
-     - Cons: Interactions get overloaded (1:1 + broadcast in same
-       table)
-  
   2. **New "Communications" / "Campaigns" entity.** First-class archive
-     of broadcasted comms. Title, date, sender, body, attachments,
-     audience (category / committee / event filter). Browsable at
-     `/communications`. Contacts get a "Received campaigns" tab.
-     - Pros: clean separation; playbook library; fits "succession
-       knowledge" framing
-     - Cons: real schema work; two overlapping concepts admins must
-       learn
-  
+     of broadcasted comms. Browsable at `/communications`. Contacts get
+     a "Received campaigns" tab.
   3. **Both, with different intents.** Interactions stay 1:1.
      Campaigns are broadcast archive. No overlap.
-     - Pros: each concept clear
-     - Cons: most work; admins learn distinction
-  
   4. **Just attach files to Interactions, skip groups.** Minimum viable.
-     Jacinth logs against herself or a representative contact. Doesn't
-     solve audience context. May be enough for v1.
-     - Pros: ships fast
-     - Cons: loses audience context value
   
   **Lean:** option 2 (separate Communications entity) IF/WHEN this is
-  built. The "institutional memory that survives successions" framing
-  suggests this artifact deserves a first-class home, not a corner of
-  Interactions. Title + attachments + searchable body + audience
-  reference is a fundamentally different artifact than "I called Mike
-  on Tuesday."
+  built. But given the Notion reframing, this whole thread is lower
+  priority — most of the "institutional memory" intent goes to Notion.
   
-  **Open questions before building:**
-  - Concrete examples of comms worth archiving (annual board election,
-    judge thank-yous, alumni newsletter, donor solicitations, what
-    else?) — confirms the playbook framing
-  - Is search-by-content needed, or is browse-by-date/audience enough?
-    Full-text search is a real bump in implementation cost.
-  - How much metadata per record? Title + body + attachments + audience
-    + date + sender? More than that = form fatigue.
-  - Does Mailchimp have an API export that could automate the capture,
-    or is this all manual upload? Manual is fine for v1 but worth
-    knowing.
-  
-  **Decision needed by:** not blocking anything else right now. But
-  notable: this kind of feature is high-leverage for the
-  "useful-tool-vs-portfolio-toy" narrative. Worth doing properly when
-  the time comes.
+  **Decision needed by:** not blocking anything else. Lower-priority
+  parking lot.
 
 ---
 
 ## 🧊 ICEBOX
+
+- **`is_test` flag on programs.** Punted during May 13 is_test
+  infrastructure work. Reasoning: only 1 test program (Midlands State),
+  +1 in stats is small known overhead, programs don't have a category
+  system to reuse, dedicated column was the only option and felt
+  asymmetric with the contacts-via-category approach. Revisit if test
+  programs proliferate or if the +1 becomes painful.
 
 - **Allow emailless contacts (or a different entity for them).**
   Surfaced May 12, 2026 from Claremont CSV import: 97 judges, only 31
@@ -398,10 +393,6 @@ Last updated: May 12, 2026 (evening session, post-dinner additions)
   
   **Lean:** option 3 — incomplete-source-data problem, not schema
   problem. Weakening Contacts identity model compounds badly at scale.
-  
-  **Questions before deciding:** plan to reach out to those 66? Would
-  hosts send follow-up CSVs with emails? Is there an AMTA workflow
-  requiring "who judged what" without contactability?
 
 - **Recover alumni-claims-admin-mvp.md spec.** Low priority since
   feature is built.
@@ -422,6 +413,21 @@ Last updated: May 12, 2026 (evening session, post-dinner additions)
 ## 📋 To write up
 
 Docs/portfolio work to capture while fresh.
+
+- **`is_test` as a product-design exercise (May 13, 2026).** Started as
+  "add an is_test column to programs and contacts" — a clean,
+  conventional schema migration. Three real pushbacks reshaped it into
+  something tighter and more reusable. (1) Category vs column for
+  contacts: reuse existing categories infrastructure instead of new
+  column. Same admin UX, zero schema work. (2) Programs scope:
+  programs don't have categories; adding `is_test` column there
+  recreates the asymmetry we just avoided. Punted; documented +1 in
+  stats. (3) Server vs client filtering policy: UI toggle for admin
+  convenience; AI outputs ALWAYS filter, regardless of toggle. Lessons:
+  "use what fits each entity" beats "consistent infrastructure" when
+  the entities are genuinely different; the right scope often emerges
+  from honest pushbacks; "we can punt this" is a real engineering
+  skill.
 
 - **RLS debugging bug story (May 12 morning).** The 403 on
   `/alumni-signup`. Correct first hypothesis, walked back wrongly when
