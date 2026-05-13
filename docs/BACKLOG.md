@@ -56,7 +56,10 @@ Last updated: May 12, 2026 (evening session, post-dinner additions)
   - Detailed result screen with imported / updated / errored breakdown +
     per-row error table
   - **Validated with real-world data:** 97-row tournament-host CSV with
-    26 columns (Google Form export with idiosyncratic headers)
+    26 columns (Google Form export with idiosyncratic headers). Of the
+    97, only 31 had emails and were imported — the remaining 66 were
+    skipped due to missing email. Whether to handle emailless contacts
+    differently is now an ICEBOX item.
   - Spec: `docs/specs/contacts-csv-import-mvp.md`
 - **Judges separated from Staff on Event detail page** (May 12, 2026)
   - Render order: Hosts → Staff → Documents → Projects → Interactions → Judges
@@ -561,6 +564,42 @@ they need coding. Resolution often unlocks several backlog items.
 ---
 
 ## 🧊 ICEBOX
+
+- **Allow emailless contacts (or a different entity for them).**
+  Surfaced May 12, 2026 after the Claremont CSV import: 97 judges in
+  the CSV, only 31 had emails, 66 skipped. Real question: should the
+  CRM accept contacts without email so we preserve the historical
+  record of who judged what?
+  
+  **Today's behavior:** Email is functionally a required field and the
+  unique identifier for dupe detection on CSV import.
+  
+  **Three real paths if we want to change this:**
+  1. **Make email optional on contacts.** Highest data preservation,
+     but breaks the dupe-detection model (need a fallback like
+     name + program). Risks duplicate records accumulating over time
+     for the same real person.
+  2. **Separate "Event Participants" / "Anonymous Judges" entity** —
+     a simpler record (name + event + role) without the full contact
+     treatment. Preserves the historical signal without weakening the
+     Contacts model. Adds schema complexity.
+  3. **Stay strict; improve the import surface.** Keep email required,
+     but make the CSV import result group "skipped (no email)" rows
+     distinctly with a downloadable CSV. Admin follows up offline to
+     collect missing emails, then re-imports. Data isn't lost, it's
+     deferred to a complete import.
+  
+  **Current lean (when this gets revisited):** option 3. The 66 missing
+  emails are an incomplete-source-data problem, not a schema problem.
+  Weakening the Contacts identity model now will compound badly as
+  data volume grows.
+  
+  **Questions worth answering before deciding:**
+  - Do we actually plan to reach out to these 66 judges, or are they
+    one-off volunteers?
+  - Would tournament hosts send a follow-up CSV with emails if asked?
+  - Is there an AMTA workflow that depends on knowing "who judged
+    what" historically, regardless of contactability?
 
 - **Recover alumni-claims-admin-mvp.md spec.** Referenced in May 11 handoff
   but not in this repo. Check the original chat session it was written in.
