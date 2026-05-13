@@ -30,6 +30,17 @@ import { createClient } from "@supabase/supabase-js";
  * conversation.
  *
  * Env vars: same as contact-summary.ts.
+ *
+ * Test-data filtering:
+ *   Tools that LIST or SEARCH contacts (search_contacts, get_committee_members)
+ *   filter out contacts tagged with the "Test" category. This prevents test
+ *   data from leaking into AI-generated content, which is often shared or
+ *   forwarded externally. The filter is unconditional server-side: it does
+ *   NOT respect the client-side "show test data" toggle, since AI outputs
+ *   are downstream artifacts with higher leakage cost than admin UI views.
+ *   Direct lookups (get_contact_details) deliberately bypass the filter —
+ *   if an admin asks about a specific contact by ID, we answer regardless
+ *   of whether it's a test record.
  */
 
 export const config = {
@@ -62,6 +73,42 @@ function getServiceClient() {
   const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
   if (!url || !key) throw new Error("Supabase URL or service role key not set");
   return createClient(url, key);
+}
+
+// -----------------------------------------------------------------------------
+// Test-contact filtering
+// -----------------------------------------------------------------------------
+
+/**
+ * Fetches the set of contact IDs tagged with the "Test" category. Used to
+ * filter test data out of AI responses. Returns a Set for O(1) lookups
+ * during result filtering.
+ *
+ * If the "Test" category doesn't exist or no contacts are tagged, returns
+ * an empty Set (filter is a no-op).
+ *
+ * Called once per request inside runAgenticLoop and passed to tool
+ * implementations to avoid re-fetching on every tool call.
+ */
+const TEST_CATEGORY_NAME = "Test";
+
+async function loadTestContactIds(
+  supabase: ServiceClient,
+): Promise<Set<string>> {
+  const { data: cat } = await supabase
+    .from("active_contact_categories")
+    .select("id")
+    .eq("name", TEST_CATEGORY_NAME)
+    .maybeSingle();
+
+  if (!cat) return new Set();
+
+  const { data: assignments } = await supabase
+    .from("active_contact_category_assignments")
+    .select("contact_id")
+    .eq("category_id", cat.id);
+
+  return new Set((assignments ?? []).map((a: any) => a.contact_id));
 }
 
 // -----------------------------------------------------------------------------
@@ -182,6 +229,7 @@ type ServiceClient = ReturnType<typeof getServiceClient>;
 
 async function executeSearchContacts(
   supabase: ServiceClient,
+  testContactIds: Set<string>,
   args: {
     name_query?: string;
     is_current_board?: boolean;
@@ -292,6 +340,10 @@ async function executeSearchContacts(
     }
   }
 
+  // Filter out test contacts — AI outputs should never include test data.
+  // See header comment on test-data filtering for the reasoning.
+  results = results.filter((c: any) => !testContactIds.has(c.id));
+
   return {
     count: results.length,
     contacts: results.slice(0, 50).map((c: any) => ({
@@ -307,6 +359,10 @@ async function executeGetContactDetails(
   supabase: ServiceClient,
   args: { contact_id: string },
 ): Promise<unknown> {
+  // Note: this deliberately does NOT filter test contacts. If an admin asks
+  // Claude about a specific contact by ID, we return it regardless of
+  // whether it's tagged Test. The filtering only applies to list/search
+  // tools where test data would otherwise leak silently.
   const { data: contact, error } = await supabase
     .from("active_contacts")
     .select("id, first_name, last_name, email, phone, ai_summary")
@@ -417,6 +473,7 @@ async function executeSearchCommittees(
 
 async function executeGetCommitteeMembers(
   supabase: ServiceClient,
+  testContactIds: Set<string>,
   args: { committee_id: string },
 ): Promise<unknown> {
   const { data: assignments, error } = await supabase
@@ -429,7 +486,18 @@ async function executeGetCommitteeMembers(
     return { committee_id: args.committee_id, members: [] };
   }
 
-  const contactIds = assignments.map((a: any) => a.contact_id);
+  // Filter test contacts out of the assignment list before we fetch their
+  // details — saves a query AND prevents test data from appearing in
+  // committee member lists.
+  const visibleAssignments = assignments.filter(
+    (a: any) => !testContactIds.has(a.contact_id),
+  );
+
+  const contactIds = visibleAssignments.map((a: any) => a.contact_id);
+  if (contactIds.length === 0) {
+    return { committee_id: args.committee_id, count: 0, members: [] };
+  }
+
   const { data: contacts } = await supabase
     .from("active_contacts")
     .select("id, first_name, last_name, email")
@@ -439,7 +507,7 @@ async function executeGetCommitteeMembers(
     (contacts ?? []).map((c: any) => [c.id, c]),
   );
 
-  const members = assignments
+  const members = visibleAssignments
     .map((a: any) => {
       const c = contactsById.get(a.contact_id) as any;
       if (!c) return null;
@@ -465,18 +533,19 @@ async function executeGetCommitteeMembers(
 
 async function executeTool(
   supabase: ServiceClient,
+  testContactIds: Set<string>,
   name: string,
   input: any,
 ): Promise<unknown> {
   switch (name) {
     case "search_contacts":
-      return executeSearchContacts(supabase, input);
+      return executeSearchContacts(supabase, testContactIds, input);
     case "get_contact_details":
       return executeGetContactDetails(supabase, input);
     case "search_committees":
       return executeSearchCommittees(supabase, input);
     case "get_committee_members":
-      return executeGetCommitteeMembers(supabase, input);
+      return executeGetCommitteeMembers(supabase, testContactIds, input);
     default:
       return { error: `Unknown tool: ${name}` };
   }
@@ -547,6 +616,11 @@ async function runAgenticLoop(
   const toolCalls: ToolCallRecord[] = [];
   let workingMessages = [...messages];
 
+  // Load the set of test contact IDs once per request and reuse across all
+  // tool calls. Tools that list/search contacts use this to filter test
+  // data out of AI responses.
+  const testContactIds = await loadTestContactIds(supabase);
+
   for (let i = 0; i < MAX_ITERATIONS; i++) {
     const response = await client.messages.create({
       model: "claude-sonnet-4-5",
@@ -580,7 +654,12 @@ async function runAgenticLoop(
       const toolResults: Anthropic.ToolResultBlockParam[] = [];
 
       for (const toolUse of toolUseBlocks) {
-        const result = await executeTool(supabase, toolUse.name, toolUse.input);
+        const result = await executeTool(
+          supabase,
+          testContactIds,
+          toolUse.name,
+          toolUse.input,
+        );
 
         // Build a short summary string for the UI
         const summary = summarizeToolCall(toolUse.name, toolUse.input, result);

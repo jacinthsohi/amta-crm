@@ -9,6 +9,7 @@ import type {
   CommitteeAssignment,
   ProgramAffiliation,
 } from "@/lib/database.types";
+import { isTestContact, shouldShowTestData } from "@/lib/test-data";
 
 // =============================================================================
 // Query keys — centralized so invalidations don't typo
@@ -56,6 +57,11 @@ export type ContactDetail = Contact & {
  * Implementation note: we fetch contacts and category assignments in parallel,
  * then stitch them in JS. This is more efficient than N+1 queries (one per
  * contact) and avoids the complexity of crafting a join in PostgREST syntax.
+ *
+ * Test data filtering: contacts tagged with the "Test" category are excluded
+ * by default. The user can opt back in via the localStorage toggle managed
+ * in src/lib/test-data.ts (and surfaced as a UI toggle on the contacts list
+ * page).
  */
 export function useContacts() {
   return useQuery<ContactWithCategories[]>({
@@ -83,10 +89,16 @@ export function useContacts() {
         else categoriesByContact.set(a.contact_id, [name]);
       }
 
-      return (contactsRes.data ?? []).map((c) => ({
+      const stitched = (contactsRes.data ?? []).map((c) => ({
         ...c,
         category_names: categoriesByContact.get(c.id) ?? [],
       }));
+
+      // Filter out test contacts unless the user has toggled them on.
+      // The toggle lives in localStorage (see src/lib/test-data.ts).
+      return shouldShowTestData()
+        ? stitched
+        : stitched.filter((c) => !isTestContact(c));
     },
   });
 }
@@ -99,6 +111,11 @@ export function useContacts() {
  * terms, committee assignments, program affiliations) and category names.
  *
  * Returns null if the contact is not found or has been soft-deleted.
+ *
+ * Note: this does NOT filter test contacts. If the admin navigated to a
+ * contact's detail page, we show them whatever they asked to see — test or
+ * not. The "TEST" badge (rendered via the Test category chip) is the
+ * visible signal that this is a test record.
  */
 export function useContact(id: string | undefined) {
   return useQuery<ContactDetail | null>({

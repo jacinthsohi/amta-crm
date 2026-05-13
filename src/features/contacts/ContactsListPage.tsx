@@ -1,7 +1,8 @@
 import { useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
+import { useQueryClient } from "@tanstack/react-query";
 import { Plus, Search, ChevronRight, Upload } from "lucide-react";
-import { useContacts, type ContactWithCategories } from "./hooks";
+import { useContacts, type ContactWithCategories, contactsQueryKeys } from "./hooks";
 import { useProgramsLookup } from "@/lib/lookups";
 import { Avatar } from "@/components/Avatar";
 import { Tag } from "@/components/Tag";
@@ -11,6 +12,10 @@ import { ExportCsvButton } from "@/components/ExportCsvButton";
 import type { CsvColumnDef } from "@/lib/csv";
 import { useProgramAffiliationsByContact } from "./hooks-affiliations";
 import { ContactForm } from "./ContactForm";
+import {
+  shouldShowTestData,
+  setShowTestData,
+} from "@/lib/test-data";
 
 type FilterId = "all" | "current_board" | "alumni" | "donors" | "judges" | "coaches";
 
@@ -72,11 +77,25 @@ function formatDate(iso: string | null | undefined): string {
 
 export default function ContactsListPage() {
   const navigate = useNavigate();
+  const qc = useQueryClient();
   const { data: contacts, isLoading, error, refetch } = useContacts();
 
   const [filter, setFilter] = useState<FilterId>("all");
   const [query, setQuery] = useState("");
   const [formOpen, setFormOpen] = useState(false);
+
+  // Test-data toggle: hidden by default, persists in localStorage. The
+  // useContacts hook reads shouldShowTestData() at fetch time, so we
+  // invalidate the query when this changes to force a refetch with the
+  // new filter applied. See src/lib/test-data.ts.
+  const [showTest, setShowTest] = useState<boolean>(() => shouldShowTestData());
+
+  function toggleTestData() {
+    const next = !showTest;
+    setShowTest(next);
+    setShowTestData(next);
+    qc.invalidateQueries({ queryKey: contactsQueryKeys.contacts });
+  }
 
   const filtered = useMemo(() => {
     if (!contacts) return [];
@@ -176,6 +195,23 @@ export default function ContactsListPage() {
               );
             })}
           </div>
+        </div>
+
+        {/*
+          Admin tools row — kept visually muted and below the primary filter
+          row so it doesn't compete for attention. Only relevant for admins
+          managing test data; everyone else can safely ignore it.
+        */}
+        <div className="mt-3 pt-3 border-t border-zinc-100 flex items-center justify-end">
+          <label className="inline-flex items-center gap-2 text-xs text-zinc-500 cursor-pointer select-none hover:text-zinc-700 transition-colors">
+            <input
+              type="checkbox"
+              checked={showTest}
+              onChange={toggleTestData}
+              className="w-3 h-3 rounded border-zinc-300 text-maroon-700 focus:ring-1 focus:ring-maroon-700 cursor-pointer"
+            />
+            Show test data
+          </label>
         </div>
       </div>
 
