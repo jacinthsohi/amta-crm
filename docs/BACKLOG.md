@@ -313,10 +313,16 @@ Last updated: May 12, 2026 (evening session, post-dinner additions)
   user is an admin, but a real liability once that stops being true.
 - **Combobox UX for the program dropdown on `/alumni-signup`.** 483 native
   `<select>` options is bad UX. Type-ahead combobox.
-- **Expand alumni signup form fields.** Needs scoping. Candidates:
-  start year (would also fix the affiliation `start_year = end_year`
-  tech debt), pronouns, roles within program, current professional
-  context.
+- **Expand alumni signup form fields.** Candidates with specific calls:
+  - **Pronouns** (newly captured — clear ask, low ambiguity)
+  - **Start year** (would also fix the affiliation
+    `start_year = end_year` tech debt on the existing form)
+  - Roles within program (board member? captain? competitor?)
+  - Current professional context (career field, job title)
+  - Decision: which fields are required vs optional? Form length
+    affects completion rate. Default to optional except start year.
+  - Schema change: pronouns probably wants its own `text` column on
+    `contacts` (other fields may already exist or have natural homes).
 - **Collapsible sidebar.** Add a toggle to collapse the left sidebar to
   icons-only (or fully hidden). Useful for screen-real-estate-heavy
   pages like the CSV import flow.
@@ -475,6 +481,82 @@ they need coding. Resolution often unlocks several backlog items.
   
   **Decision needed by:** before shipping the position dropdown work,
   which is a 🟡 MEDIUM item. So no rush, but don't let it linger.
+
+- **📧 Secondary email on contacts: how do we model it?** Captured
+  May 12, 2026 from two converging use cases that surfaced this evening:
+  
+  **The use cases:**
+  - **Alumni:** college contacts often have both a school email
+    (`@university.edu`, while they were a student) and a personal email
+    (`@gmail.com` or similar, persists after graduation). When alumni
+    graduate, the school email goes dead, but it's often the best
+    "identity verification" for matching them to historical records.
+    Personal email is the one that actually reaches them long-term.
+    Both are valuable to capture.
+  - **Personal/workspace email distinction:** referenced in earlier
+    conversation but not detailed — likely covers cases where a contact
+    has a work email (often their Google Workspace) and a personal
+    email, and admin communication may route differently depending on
+    purpose.
+  
+  **What questions this raises:**
+  
+  *1. Is "secondary email" one field or one of many "additional
+  emails"?*
+  - Simple: one extra `secondary_email` column. Easy. Covers 95% of
+    cases.
+  - Flexible: a related `contact_emails` table with rows like
+    `{contact_id, email, label, is_primary}`. Handles people with 3+
+    emails (rare but real — some alumni have school + personal +
+    current workplace).
+  - **Lean:** start simple (one column) unless we see real-world
+    contacts with 3+ emails right now. Migrate to a table later if
+    needed.
+  
+  *2. What's the label scheme?*
+  - For alumni context: "School" vs "Personal" makes sense
+  - For general context: "Work" vs "Personal" is more common
+  - Want both? Or a free-text label per row?
+  - **Lean:** if we ship the simple version (one extra column), the
+    label is implicit ("primary" and "secondary" — no explicit field).
+    If we ship the flexible version, support labels but seed them
+    with a small dropdown of common values + "Other (specify)".
+  
+  *3. Which email is "primary" — and what does that mean operationally?*
+  - The primary email is what shows in the Contacts list, what gets
+    used as the dupe-detection key during CSV import, and what's
+    surfaced in AI-generated content (e.g. meeting briefs).
+  - Secondary is supplementary — visible on the detail page but not
+    the primary identity.
+  - Edge case: what happens during CSV import if a row's email matches
+    someone's SECONDARY email but not primary? Probably treat as
+    matched (additive update), but flag in the result UI ("matched
+    on secondary email") so admin can verify.
+  
+  *4. What about the alumni signup flow specifically?*
+  - Alumni form currently asks for one email. Add a "second email
+    (optional)" field? Or two clearly-labeled "School email" and
+    "Personal email" fields?
+  - **Lean:** "School email" + "Personal email" labels are more
+    intuitive for the alumni use case. Even if the underlying schema
+    is generic, the form can label them domain-appropriately.
+  
+  *5. Migration story?*
+  - Existing contacts have one email. Migration: existing email
+    becomes the "primary" — no data loss.
+  - Backfill: zero. New field defaults to NULL.
+  
+  **Scope:** Depends on which path:
+  - Simple (one extra column): 1-2 hours total. Migration, schema
+    type, form field on contact edit, display on contact detail page,
+    update CSV import / export to include it.
+  - Flexible (related table): 4-6 hours. Same surfaces as above, plus
+    UI for adding/removing emails dynamically, plus dupe-detection
+    logic that considers all emails.
+  
+  **Decision needed by:** before expanding the alumni signup form (the
+  "Expand alumni signup form fields" backlog item). The school/personal
+  email decision is most actionable in that flow.
 
 ---
 
