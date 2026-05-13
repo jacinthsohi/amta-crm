@@ -13,22 +13,30 @@ handoff docs.
 - 💭 DESIGN DISCUSSIONS — open product questions, no clear shape yet
 - ✅ SHIPPED — done, kept here for momentum / portfolio context
 
-Last updated: May 13, 2026 (post /data dashboard ship)
+Last updated: May 13, 2026 (post /data dashboard ship + heatmap tooltip polish)
 
 ---
 
 ## ✅ Recently shipped
 
+- **🎨 /data heatmap custom tooltip + hover polish** (May 13, 2026)
+  - Replaced native `<title>` tooltip with a custom React tooltip:
+    follows cursor, brand-styled (dark zinc card, white text, shadow),
+    proper singular/plural noun ("1 alum" vs "23 alumni").
+  - Hover state on each state: stroke darkens to brand maroon at 1.5px,
+    cursor becomes pointer (signals interactivity even though
+    click-through navigation is deferred to MEDIUM).
+  - States with 0 data still show their tooltip — confirms the map
+    is working rather than the user wondering "did my hover miss?"
+  - Pointer-events: none on the tooltip so the cursor passes through
+    cleanly.
+
 - **📊 KPI / Data dashboard at `/data`** (May 13, 2026)
   - Three metric cards: Active programs (with international count
     subtitle), Active alumni, Current board members (using "Current
     Board Member" category as v1 proxy).
-  - US state heatmap with Programs/Alumni toggle. Native title tooltip
-    on hover ("California: 23 programs"). Color scale from light pink
-    to brand maroon, sqrt-scaled for visual sensitivity at low counts.
-  - Alumni heatmap rolls each alum up via their program's state — Yale
-    alum counts as CT even if they live in CA. Future toggle for "by
-    current state" tracked in alumni form expansion item.
+  - US state heatmap with Programs/Alumni toggle.
+  - Alumni heatmap rolls each alum up via their program's state.
   - All test contacts excluded from alumni count, board count, alumni
     heatmap.
   - Library: `react-simple-maps` with the public `us-atlas` topojson
@@ -173,8 +181,10 @@ Last updated: May 13, 2026 (post /data dashboard ship)
   user clicks California on the Programs heatmap, navigate to
   `/programs?state=California` (filtered list). Same for alumni
   heatmap → `/contacts?state=California`. Pre-work: add state
-  filtering to `/programs` and `/contacts` list pages. Scope: one
-  session of focused work.
+  filtering to `/programs` and `/contacts` list pages. The map
+  already signals interactivity with cursor pointer + hover stroke,
+  so wiring up the actual navigation is the missing piece. Scope:
+  one session of focused work.
 
 - **Collapsible sidebar.** Toggle to collapse to icons-only.
 
@@ -209,9 +219,14 @@ Last updated: May 13, 2026 (post /data dashboard ship)
   mirror the `loadTestContactIds()` + per-tool filter pattern from
   `api/ask.ts`. 20-30 min.
 
-- **Polish `/data` heatmap tooltip.** Native `<title>` works but is
-  slow to appear and unstyled. Replace with a custom React tooltip
-  for snappier UX. ~30 min.
+- **`/data` heatmap tooltip viewport-edge flipping.** Tooltip currently
+  always renders at cursor + (12px, 12px) offset. If you hover a state
+  near the right/bottom edge of the viewport (e.g., southeast tip of
+  Florida if the map is sitting low on the page), the tooltip can spill
+  off-screen. Not a real issue at the US map's typical render position
+  but worth polishing if it surfaces. Fix: detect viewport edges in
+  `handleMouseMove` and flip the tooltip to render up-left in those
+  cases. ~15 min.
 
 - **Standardize button heights across action rows.** PrimaryButton vs
   ExportCsvButton vs Import. 20-30 min focused.
@@ -287,7 +302,9 @@ Last updated: May 13, 2026 (post /data dashboard ship)
   rather than papered over (and surfaced as a future toggle when
   contacts.current_state is populated); (3) the engineering lesson of
   using a feature flag on which view fits each entity vs. mass
-  abstraction. Also a great visual portfolio piece.
+  abstraction. Also a great visual portfolio piece. **Polish pass
+  (custom tooltip + hover stroke + pointer cursor) shipped same day
+  as a separate commit — small but real UX upgrade worth mentioning.**
 
 - **The active_programs-missing-country bug (May 13).** Mid-build, the
   dashboard 400'd because the view was created before the country
