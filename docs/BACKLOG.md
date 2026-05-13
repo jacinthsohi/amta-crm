@@ -13,12 +13,22 @@ handoff docs.
 - 💭 DESIGN DISCUSSIONS — open product questions, no clear shape yet
 - ✅ SHIPPED — done, kept here for momentum / portfolio context
 
-Last updated: May 12, 2026 (end of evening session)
+Last updated: May 12, 2026 (evening session, post-dinner additions)
 
 ---
 
 ## ✅ Recently shipped
 
+- **Programs geographic data populated** (May 12, 2026)
+  - Added `country text NOT NULL DEFAULT 'USA'` column to `programs`
+  - Updated city, state, website, country for 483 of 484 programs from
+    a curated CSV dataset
+  - Breakdown: 479 USA / 4 Canada (Guelph, McGill, Toronto, York) /
+    1 South Korea (Ewha Womans University)
+  - Test Program row skipped — will be flagged when `is_test`
+    infrastructure ships
+  - Unblocks the US state heatmap on the upcoming `/data` dashboard
+  - Migration: `migrations/20260512_programs_geo_data.sql`
 - **"Add judges" deep-link flow on Event detail page** (May 12, 2026)
   - "Add judges" button next to Edit in Event detail header (tournament
     events only — board meetings don't get the button)
@@ -150,6 +160,9 @@ Last updated: May 12, 2026 (end of evening session)
   - Backfill: identify the three current test contacts + flag them
     `is_test = true`. List of identifiable test contacts to update
     during migration, captured ahead of time so backfill is deterministic.
+  - Also retroactively flag the "Test Program" row (id
+    `84e894f3-62e5-4802-86cc-fc366e621f6a`) which was deliberately left
+    out of the May 12 geo-data migration for this reason.
   - Create "Midlands State University" as a real program row but with
     `is_test = true` (and any future test programs follow this convention)
   
@@ -198,6 +211,52 @@ Last updated: May 12, 2026 (end of evening session)
   **Do this BEFORE the data dashboard ships.** Building the dashboard
   first and retrofitting the filter later is harder than the reverse.
 
+- **🧾 Export "all" vs "current view" + upcoming pagination for
+  Contacts.** Surfaced May 12, 2026 from real usage. Two related
+  concerns:
+  
+  **Issue 1: Export scope.** Today, both the Programs and Contacts CSV
+  export buttons export `rows={filtered}` — whatever the current filter
+  matches. That means: if filters / search are applied, export reflects
+  them; if "All" is selected and no search, export includes everything.
+  Technically you CAN export all by clearing filters first, but that's
+  friction and not obvious. Real-world need: "give me a CSV of all my
+  programs" without re-deriving the right filter state. Worth making
+  this explicit in the export modal.
+  
+  **Issue 2: Contacts pagination is coming.** Once contacts grow into
+  the thousands (post-CSV-imports, post-judge-signup-flow), the page
+  won't render all rows at once. The mental model of "export the
+  current view" gets confusing — is that the current PAGE or the
+  current FILTERED SET? Worth deciding before pagination ships, not
+  after.
+  
+  **Options for the export UX (need to pick one):**
+  1. **"Export all" vs "Export filtered" toggle in the modal.** Explicit,
+     user picks. Default to filtered (current behavior).
+  2. **Export always means "everything matching the filter, ignoring
+     pagination."** Cleanest mental model — filters narrow, pagination
+     only affects rendering. The export query re-fetches without
+     pagination limits. *(Current lean — least surprising for most users.)*
+  3. **Hybrid: "filter-matched" by default with a "Clear filters and
+     export all" affordance for the common case.** More UI work,
+     potentially most user-friendly.
+  
+  **Scope when picked up:**
+  - Decide option (probably 2, but worth confirming once pagination is
+    in scope)
+  - For pagination: implement infinite scroll or page numbers on
+    Contacts. Apply same pattern to Programs if it grows similarly.
+  - For export: ensure the export query re-fetches the full filtered
+    set, not just the visible page
+  - Update ExportCsvButton if needed to take a `fetchAllRows()` async
+    callback rather than just receiving `rows`
+  - Visual indicator of how many rows will be exported (the modal
+    already shows this — just need it to reflect the full count, not
+    the page count)
+  
+  Estimated: 2-3 hours including pagination, less if just export work.
+
 - **Add seasonal dimension to committee assignments + board membership.**
   AMTA operates on July–June "seasons" tied to the annual board meeting.
   Committees can exist in one season and not the next (e.g. Operational
@@ -223,14 +282,8 @@ Last updated: May 12, 2026 (end of evening session)
   breakdown), Pending invitations, Recent contact additions (last 90 days).
   Pre-work: (1) need to populate `board_terms` table — currently zero
   rows; (2) `is_test` infrastructure should ship FIRST so the dashboard
-  is built filtering on `is_test = false` from day one. Also potentially
-  a US state heatmap of active programs once geographic data is populated.
-- **Populate geographic data on `programs` table.** Currently 484 programs,
-  zero have city / state / website filled. Blocks the heatmap viz. Two
-  paths: source a spreadsheet and use the new CSV import flow (if we
-  extend it to programs), or build a focused admin tool. Also add a
-  `country` field while we're at it (1-2 programs are non-US — Canada,
-  South Korea).
+  is built filtering on `is_test = false` from day one. Geographic data
+  on programs is DONE (May 12) — heatmap viz is unblocked.
 - **Admin data-cleanup / dupe-merge tool.** Find duplicate contacts via
   heuristics (email match, name + email-domain match, similar names +
   shared program). Side-by-side comparison UI. Pick fields to keep from
@@ -275,8 +328,10 @@ Last updated: May 12, 2026 (end of evening session)
   sort that just shipped.
 - **Profile / Settings page (separate from Contact record).** User
   account settings, not the same thing as someone's contact data.
-- **CSV import for Programs.** Symmetric to the existing CSV export, and
-  the unblock for populating program geographic data.
+- **CSV import for Programs.** Symmetric to the existing CSV export.
+  Note: geographic data was populated via SQL migration on May 12, so
+  this is no longer urgent — but the symmetric capability is still
+  worth building.
 - **Revamp Home page.** Reduce/remove stats; focus on individual user
   workflow (their tasks, their recent interactions, etc). Data-style
   metrics live on `/data` instead.
@@ -291,6 +346,29 @@ Last updated: May 12, 2026 (end of evening session)
 
 ## 🟢 LOW
 
+- **Standardize button heights across action rows (PrimaryButton +
+  ExportCsvButton + Import CSV button).** Visible on Programs list: the
+  ExportCsvButton (`px-2.5 py-1.5 text-sm`) is noticeably shorter than
+  the PrimaryButton "New program." Same baseline mismatch exists on
+  Contacts but is less visible because the Import CSV button (also
+  sized to match Export) bridges the gap visually. The fix isn't
+  "make Export bigger on Programs" — it's a shared-component sizing
+  decision that should be made once and applied consistently.
+  
+  **Approach when picked up:**
+  1. Decide canonical secondary-button dimensions to match PrimaryButton's
+     height. Likely `px-3 py-2 text-sm font-medium` or thereabouts —
+     measure from the actual PrimaryButton implementation in
+     `src/components/Buttons.tsx`.
+  2. Update `ExportCsvButton.tsx` to use that sizing.
+  3. Update the inline Import CSV button in `ContactsListPage.tsx` to
+     match (they were explicitly mirrored earlier; keep them mirrored).
+  4. Visual check on both Contacts and Programs list pages.
+  5. Optional: extract a shared `<SecondaryButton>` primitive so future
+     secondary actions don't drift.
+  
+  ~20-30 min when done with focus. NOT a wine-time fix because it touches
+  shared components and benefits from doing right.
 - **Add email consent disclosure to `/alumni-signup`.** "By submitting, you
   agree to receive communications from AMTA about alumni programming."
   Pair with email infrastructure rollout. Current copy is narrower than
