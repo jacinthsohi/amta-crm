@@ -13,23 +13,34 @@ handoff docs.
 - 💭 DESIGN DISCUSSIONS — open product questions, no clear shape yet
 - ✅ SHIPPED — done, kept here for momentum / portfolio context
 
-Last updated: May 13, 2026 (post /data dashboard ship + heatmap tooltip polish)
+Last updated: May 13, 2026 (post collapsible sidebar ship)
 
 ---
 
 ## ✅ Recently shipped
+
+- **🪟 Collapsible sidebar** (May 13, 2026)
+  - Toggle button in the brand area collapses sidebar to 56px (icons
+    only); expand back to 232px. Width animates smoothly over 150ms.
+  - State persists in localStorage (`amta:sidebar-collapsed`).
+  - Hover-to-expand deliberately skipped for v1 — extra state to
+    manage, can add later if needed.
+  - Tooltips on every nav icon when collapsed (native `title`).
+    Native delay ~1s but acceptable — nav icons get learned fast.
+  - Search becomes an icon button when collapsed (clicks the same
+    handler as the expanded input).
+  - Admin pending-claims indicator: full pill expanded, small maroon
+    dot on icon when collapsed.
+  - Profile: full block expanded, avatar + sign-out icon stacked
+    when collapsed.
 
 - **🎨 /data heatmap custom tooltip + hover polish** (May 13, 2026)
   - Replaced native `<title>` tooltip with a custom React tooltip:
     follows cursor, brand-styled (dark zinc card, white text, shadow),
     proper singular/plural noun ("1 alum" vs "23 alumni").
   - Hover state on each state: stroke darkens to brand maroon at 1.5px,
-    cursor becomes pointer (signals interactivity even though
-    click-through navigation is deferred to MEDIUM).
-  - States with 0 data still show their tooltip — confirms the map
-    is working rather than the user wondering "did my hover miss?"
-  - Pointer-events: none on the tooltip so the cursor passes through
-    cleanly.
+    cursor becomes pointer.
+  - States with 0 data still show their tooltip.
 
 - **📊 KPI / Data dashboard at `/data`** (May 13, 2026)
   - Three metric cards: Active programs (with international count
@@ -51,32 +62,21 @@ Last updated: May 13, 2026 (post /data dashboard ship + heatmap tooltip polish)
     `active_*` view.
 
 - **🧪 Test-data infrastructure via Test category** (May 13, 2026)
-  - Reuses existing categories infrastructure rather than adding a column
-    (admin tags contacts with "Test" category, no schema migration needed
-    for contacts).
+  - Reuses existing categories infrastructure rather than adding a column.
   - 5 contacts seeded into the Test category: Mallory, Mikey, Molly, Monty
     Midlander; Mary Mocker.
-  - New shared helper at `src/lib/test-data.ts`: constant
-    `TEST_CATEGORY_NAME = "Test"`, `isTestContact()` predicate,
-    `getTestContactIds()` async fetcher, `excludeTestContacts()` query
-    wrapper, plus `shouldShowTestData()` / `setShowTestData()` for the
-    localStorage toggle.
-  - Contacts list filters out test contacts by default; admin toggle on
-    `/contacts` to show them; persists via localStorage.
+  - Shared helper at `src/lib/test-data.ts` with predicate, fetcher,
+    query wrapper, and localStorage toggle accessors.
+  - Contacts list filters out test contacts by default; admin toggle
+    on `/contacts`; persists via localStorage.
   - Ask AI server-side filter (`api/ask.ts`): test contacts always
-    excluded from `search_contacts` and `get_committee_members` tools.
-    Direct lookups (`get_contact_details`) intentionally bypass the
-    filter. Unconditional server-side (does NOT respect the
-    client-side toggle).
+    excluded from search/list tools. Direct lookups intentionally
+    bypass. Unconditional server-side.
   - Programs `is_test` deliberately punted (icebox). Only 1 test
     program (Midlands State).
   - Real-data verified in prod.
 
 - **Programs geographic data populated** (May 12, 2026)
-  - Added `country text NOT NULL DEFAULT 'USA'` to `programs`
-  - 483 of 484 programs got city/state/website/country (curated CSV)
-  - 479 USA / 4 Canada / 1 South Korea
-  - Migration: `migrations/20260512_programs_geo_data.sql`
 - **"Add judges" deep-link flow on Event detail page** (May 12, 2026)
 - **Contacts CSV import flow** (May 12, 2026)
 - **Judges separated from Staff on Event detail page** (May 12, 2026)
@@ -103,9 +103,7 @@ Last updated: May 13, 2026 (post /data dashboard ship + heatmap tooltip polish)
   **Side note:** when we touch this, also need to make sure each view
   exposes the current set of columns from the underlying table — the
   May 13 `/data` build hit the `active_programs`-missing-`country`
-  variant of this problem and had to recreate the view inline. The
-  RLS audit should include a column-completeness pass for every view
-  while we're rebuilding them.
+  variant of this problem and had to recreate the view inline.
   
   **Not currently an incident:** Jacinth is the only real user. Becomes
   a real incident once a second user logs in.
@@ -186,8 +184,6 @@ Last updated: May 13, 2026 (post /data dashboard ship + heatmap tooltip polish)
   so wiring up the actual navigation is the missing piece. Scope:
   one session of focused work.
 
-- **Collapsible sidebar.** Toggle to collapse to icons-only.
-
 - **Self-service profile editing for alumni (Phase 3).**
 
 - **Sortable lists across Contacts / Programs / Events.** Shared
@@ -221,12 +217,8 @@ Last updated: May 13, 2026 (post /data dashboard ship + heatmap tooltip polish)
 
 - **`/data` heatmap tooltip viewport-edge flipping.** Tooltip currently
   always renders at cursor + (12px, 12px) offset. If you hover a state
-  near the right/bottom edge of the viewport (e.g., southeast tip of
-  Florida if the map is sitting low on the page), the tooltip can spill
-  off-screen. Not a real issue at the US map's typical render position
-  but worth polishing if it surfaces. Fix: detect viewport edges in
-  `handleMouseMove` and flip the tooltip to render up-left in those
-  cases. ~15 min.
+  near the right/bottom edge of the viewport, the tooltip can spill
+  off-screen. ~15 min.
 
 - **Standardize button heights across action rows.** PrimaryButton vs
   ExportCsvButton vs Import. 20-30 min focused.
@@ -250,6 +242,23 @@ Last updated: May 13, 2026 (post /data dashboard ship + heatmap tooltip polish)
 - **B2:** Officer terms can't be edited inline.
 - **B3:** Can't remove program affiliation from a Contact page.
 - **B4:** Category multi-select dropdown perceived-slow.
+- **B5:** Pre-existing auth users don't auto-resolve their pending
+  invitations. Surfaced May 13: `w.warihay@gmail.com` was manually
+  created in Google Auth during early setup, can sign in fine, but
+  his invitation row still shows Pending in `/admin/invitations`.
+  Jacinth is mid-diagnostic: sending him the invite link to see if
+  going through that flow resolves it.
+  
+  **Two possible outcomes:**
+  1. Invite link flow clears the bug → it's a "pre-existing auth
+     users need a manual re-invite" pattern, low priority since
+     post-RLS-fix + email automation we'll stop manually creating
+     auth users.
+  2. Invite link doesn't clear → there's a real desync between
+     `auth.users` and the invitation table. Worth investigating.
+  
+  Either way, not blocking — Warihay has access. The admin view is
+  just misleading. Update this entry once Jacinth runs the test.
 
 ---
 
@@ -287,29 +296,16 @@ Last updated: May 13, 2026 (post /data dashboard ship + heatmap tooltip polish)
   2. **New entity (Roadmap / Initiatives / Priorities).** Bigger
      scope but keeps Projects unchanged for whatever it's serving now.
   3. **`/projects` is empty/underused and this is the killer use
-     case that gives it purpose.** Same code path as option 1,
-     different framing — we're not adding a feature, we're finally
-     putting Projects to work.
+     case that gives it purpose.**
   
-  **Pre-work needed:** look at what `/projects` actually is today
-  (the page, the schema, current usage). That's the decision-driving
-  question. Until that's checked, this is speculation.
+  **Pre-work needed:** look at what `/projects` actually is today.
   
-  **Related but distinct:** "Goals" / OKRs (measurable outcomes,
-  "Grow active alumni by 30% by FY25"). The spreadsheet is NOT OKRs
-  — it's discrete initiatives with priority/status. If both Goals and
-  Roadmap end up being CRM features, they could nest: each Roadmap
-  item links to the OKR it supports. But Goals is its own discussion;
-  don't conflate.
+  **Related but distinct:** "Goals" / OKRs (measurable outcomes).
+  The spreadsheet is NOT OKRs — it's discrete initiatives with
+  priority/status. Don't conflate.
   
-  **Scope when built:** depends entirely on option choice. Option 1 =
-  half-day. Option 2 = day or more.
-  
-  **Decision needed by:** not blocking anything. Park until Jacinth
-  has a concrete reason to migrate the sheet into the CRM (e.g., wants
-  the dashboard to surface roadmap status, wants AMTA EC to view it
-  via the CRM rather than the sheet, wants AI features to query
-  current priorities).
+  **Scope when built:** depends on option choice. Option 1 = half-
+  day. Option 2 = day or more.
 
 ---
 
@@ -337,26 +333,32 @@ Last updated: May 13, 2026 (post /data dashboard ship + heatmap tooltip polish)
 
 ## 📋 To write up
 
-- **`/data` dashboard ship (May 13, 2026).** Two product threads
-  worth capturing: (1) The "one map or two" question — initial
-  instinct was stacked / side-by-side, picked toggle for vertical
-  real-estate reasons; (2) the honest framing of "alumni geo rolls up
-  via program state" being explicitly acknowledged as a v1 limitation
-  rather than papered over (and surfaced as a future toggle when
-  contacts.current_state is populated); (3) the engineering lesson of
-  using a feature flag on which view fits each entity vs. mass
-  abstraction. Also a great visual portfolio piece. **Polish pass
-  (custom tooltip + hover stroke + pointer cursor) shipped same day
-  as a separate commit — small but real UX upgrade worth mentioning.**
+- **Collapsible sidebar ship (May 13).** Standard pattern, but a few
+  honest design choices worth noting: hover-to-expand deliberately
+  skipped for v1 (extra state to manage; can add later); native
+  `title` tooltips accepted despite the 1s delay because nav icons
+  get learned quickly; pending-claims pill becoming a maroon dot when
+  collapsed (signal preservation in a smaller affordance). Small but
+  real polish work.
+
+- **`/data` dashboard ship (May 13, 2026).** Two product threads worth
+  capturing: (1) The "one map or two" question — initial instinct was
+  stacked / side-by-side, picked toggle for vertical real-estate
+  reasons; (2) the honest framing of "alumni geo rolls up via program
+  state" being explicitly acknowledged as a v1 limitation rather than
+  papered over (surfaced as a future toggle when contacts.current_state
+  is populated); (3) the engineering lesson of using a feature flag on
+  which view fits each entity vs. mass abstraction. Also a great visual
+  portfolio piece. Polish pass (custom tooltip + hover stroke + pointer
+  cursor) shipped same day as a separate commit.
 
 - **The active_programs-missing-country bug (May 13).** Mid-build, the
   dashboard 400'd because the view was created before the country
   column was added. Postgres views don't auto-update their column
   lists. Recreated the view inline. Concrete instance of the bigger
   RLS-bypass-views issue. Lessons: views and their underlying tables
-  drift; "active_*" pattern needs auditing for both security and
-  column completeness; the column-recreate question makes the RLS
-  fix bigger but also more valuable.
+  drift; the column-recreate question makes the RLS fix bigger but
+  also more valuable.
 
 - **`is_test` as a product-design exercise (May 13).** Three pushbacks
   reshaped scope: category vs column for contacts, programs punted,
