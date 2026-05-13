@@ -268,6 +268,49 @@ Last updated: May 13, 2026 (post /data dashboard ship + heatmap tooltip polish)
   Interactions.** Reframed May 12 evening: AMTA uses Notion as
   knowledge base. Lower priority parking lot.
 
+- **🗺️ Roadmap / Priorities tracker — separate entity, or extend
+  Projects?** Surfaced May 13 from Jacinth's `[AMTA] EC H2 2025
+  Projects / Priorities Roadmap` spreadsheet. The sheet tracks
+  initiative-level work with columns: Priority (P0/P1/P2/P3), Status
+  (Done/In Progress/Not Started), Area (Core Ops / People Ops /
+  Scaling / Finance / Management / Growth / Cleanup), Summary,
+  Progress, Driver, Accountable. Currently in Google Sheets, used
+  for socializing priorities to AMTA EC.
+  
+  **The honest question:** is this what `/projects` is already for,
+  or does it want its own entity?
+  
+  **Three possibilities:**
+  1. **Extend `/projects`** with Priority enum, Area enum, separate
+     Driver/Accountable fields. Smaller scope; assumes Projects'
+     current shape is structurally compatible.
+  2. **New entity (Roadmap / Initiatives / Priorities).** Bigger
+     scope but keeps Projects unchanged for whatever it's serving now.
+  3. **`/projects` is empty/underused and this is the killer use
+     case that gives it purpose.** Same code path as option 1,
+     different framing — we're not adding a feature, we're finally
+     putting Projects to work.
+  
+  **Pre-work needed:** look at what `/projects` actually is today
+  (the page, the schema, current usage). That's the decision-driving
+  question. Until that's checked, this is speculation.
+  
+  **Related but distinct:** "Goals" / OKRs (measurable outcomes,
+  "Grow active alumni by 30% by FY25"). The spreadsheet is NOT OKRs
+  — it's discrete initiatives with priority/status. If both Goals and
+  Roadmap end up being CRM features, they could nest: each Roadmap
+  item links to the OKR it supports. But Goals is its own discussion;
+  don't conflate.
+  
+  **Scope when built:** depends entirely on option choice. Option 1 =
+  half-day. Option 2 = day or more.
+  
+  **Decision needed by:** not blocking anything. Park until Jacinth
+  has a concrete reason to migrate the sheet into the CRM (e.g., wants
+  the dashboard to surface roadmap status, wants AMTA EC to view it
+  via the CRM rather than the sheet, wants AI features to query
+  current priorities).
+
 ---
 
 ## 🧊 ICEBOX
