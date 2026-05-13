@@ -23,6 +23,7 @@ import {
   timestampedFilename,
   type CsvColumnDef,
 } from "@/lib/csv";
+import { SecondaryButton } from "@/components/Buttons";
 
 interface Props<T> {
   rows: T[];
@@ -96,14 +97,17 @@ export function ExportCsvButton<T>({
 
   return (
     <>
-      <button
-        onClick={() => setOpen(true)}
-        disabled={disabled}
-        className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-sm bg-white border border-zinc-200 text-zinc-700 hover:bg-zinc-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-      >
-        <Download size={14} />
-        {label}
-      </button>
+      {/*
+        Trigger button uses SecondaryButton for consistent geometry with
+        other secondary actions (Import, etc) on action rows. We still
+        need an icon prefix, so wrap children in an inline-flex span.
+      */}
+      <SecondaryButton onClick={() => setOpen(true)} disabled={disabled}>
+        <span className="inline-flex items-center gap-1.5">
+          <Download size={14} />
+          {label}
+        </span>
+      </SecondaryButton>
 
       {open && (
         <div

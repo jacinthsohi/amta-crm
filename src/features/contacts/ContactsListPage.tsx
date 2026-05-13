@@ -7,7 +7,7 @@ import { useProgramsLookup } from "@/lib/lookups";
 import { Avatar } from "@/components/Avatar";
 import { Tag } from "@/components/Tag";
 import { LoadingState, ErrorState, EmptyState } from "@/components/states";
-import { PrimaryButton } from "@/components/Buttons";
+import { PrimaryButton, SecondaryButton } from "@/components/Buttons";
 import { ExportCsvButton } from "@/components/ExportCsvButton";
 import type { CsvColumnDef } from "@/lib/csv";
 import { useProgramAffiliationsByContact } from "./hooks-affiliations";
@@ -136,20 +136,18 @@ export default function ContactsListPage() {
             </p>
           </div>
           {/*
-            Action row order: Import → Export → New contact.
-            Import button styling matches ExportCsvButton's internal styling
-            (px-2.5 py-1.5 text-sm) so the two read as a true pair. New
-            contact stays the primary maroon PrimaryButton.
+            Action row: Import → Export → New contact.
+            Import and Export both use SecondaryButton for consistent height
+            and style. New contact stays PrimaryButton (maroon) since it's
+            the primary action on the page.
           */}
           <div className="flex items-center gap-2">
-            <button
-              type="button"
-              onClick={() => navigate("/contacts/import")}
-              className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-sm bg-white border border-zinc-200 text-zinc-700 hover:bg-zinc-50 transition-colors"
-            >
-              <Upload size={14} />
-              Import CSV
-            </button>
+            <SecondaryButton onClick={() => navigate("/contacts/import")}>
+              <span className="inline-flex items-center gap-1.5">
+                <Upload size={14} />
+                Import CSV
+              </span>
+            </SecondaryButton>
             <ExportCsvButton
               rows={filtered}
               columns={CONTACT_EXPORT_COLUMNS}
