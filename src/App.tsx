@@ -17,6 +17,7 @@ import LandingPage from "@/features/legal/LandingPage";
 import { AppLayout } from "@/features/layout/AppLayout";
 
 import DashboardPage from "@/features/dashboard/DashboardPage";
+import DataPage from "@/features/data/DataPage";
 import InvitationsPage from "@/features/admin/InvitationsPage";
 import ContactsListPage from "@/features/contacts/ContactsListPage";
 import AdminGate from "@/features/admin/AdminGate";
@@ -97,8 +98,9 @@ export default function App() {
                 </RequireAuth>
               }
             >
+              <Route path="data" element={<DataPage />} />
               <Route path="contacts" element={<ContactsListPage />} />
-		<Route path="contacts/import" element={<ContactsImportPage />} />
+              <Route path="contacts/import" element={<ContactsImportPage />} />
               <Route path="contacts/:id" element={<ContactDetailPage />} />
               <Route path="programs" element={<ProgramsListPage />} />
               <Route path="programs/:id" element={<ProgramDetailPage />} />
@@ -131,7 +133,7 @@ export default function App() {
                   </AdminGate>
                 }
               />
-<Route
+              <Route
                 path="admin/alumni-claims"
                 element={
                   <AdminGate>

@@ -14,6 +14,7 @@ import {
   Shield,
   Mail,
   UserPlus,
+  BarChart3,
 } from "lucide-react";
 import { useAuth } from "@/lib/auth";
 import { useIsAdmin } from "@/features/admin/hooks";
@@ -24,6 +25,7 @@ import { initialsOf } from "@/lib/format";
 const NAV_ITEMS = [
   { to: "/", label: "Home", icon: Home, exact: true },
   { to: "/ask", label: "Ask AI", icon: Sparkles },
+  { to: "/data", label: "Data", icon: BarChart3 },
   { to: "/contacts", label: "Contacts", icon: Users },
   { to: "/programs", label: "Programs", icon: GraduationCap },
   { to: "/committees", label: "Committees", icon: Briefcase },
