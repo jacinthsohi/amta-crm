@@ -13,11 +13,24 @@ handoff docs.
 - 💭 DESIGN DISCUSSIONS — open product questions, no clear shape yet
 - ✅ SHIPPED — done, kept here for momentum / portfolio context
 
-Last updated: May 13, 2026 (post collapsible sidebar ship)
+Last updated: May 13, 2026 (post button-height standardization)
 
 ---
 
 ## ✅ Recently shipped
+
+- **🔘 Action-row buttons use SecondaryButton component** (May 13, 2026)
+  - Inline Import button on ContactsListPage and the trigger inside
+    ExportCsvButton both used custom className strings — slightly
+    different padding and font weight than the existing
+    SecondaryButton component, producing visible misalignment.
+  - Fix: replaced both with `<SecondaryButton>`. All action-row
+    buttons (Import / Export / New contact) now match heights and
+    visual weight.
+  - Cleaner architecturally — future style changes cascade
+    automatically. ExportCsvButton's modal-internal buttons (Cancel,
+    Download, close-X) deliberately untouched — different geometry
+    needs.
 
 - **🪟 Collapsible sidebar** (May 13, 2026)
   - Toggle button in the brand area collapses sidebar to 56px (icons
@@ -26,9 +39,7 @@ Last updated: May 13, 2026 (post collapsible sidebar ship)
   - Hover-to-expand deliberately skipped for v1 — extra state to
     manage, can add later if needed.
   - Tooltips on every nav icon when collapsed (native `title`).
-    Native delay ~1s but acceptable — nav icons get learned fast.
-  - Search becomes an icon button when collapsed (clicks the same
-    handler as the expanded input).
+  - Search becomes an icon button when collapsed.
   - Admin pending-claims indicator: full pill expanded, small maroon
     dot on icon when collapsed.
   - Profile: full block expanded, avatar + sign-out icon stacked
@@ -55,11 +66,7 @@ Last updated: May 13, 2026 (post collapsible sidebar ship)
   - Lives in `src/features/data/` (separate from `src/features/
     dashboard/` which is the personal Home page).
   - **Side fix:** `active_programs` view recreated to include the
-    `country` column. The May 12 geo migration added country to the
-    `programs` table, but Postgres views don't auto-update when
-    underlying tables change. This is exactly the kind of issue the
-    RLS-bypass-views fix (HIGH) will need to handle for every
-    `active_*` view.
+    `country` column.
 
 - **🧪 Test-data infrastructure via Test category** (May 13, 2026)
   - Reuses existing categories infrastructure rather than adding a column.
@@ -220,9 +227,6 @@ Last updated: May 13, 2026 (post collapsible sidebar ship)
   near the right/bottom edge of the viewport, the tooltip can spill
   off-screen. ~15 min.
 
-- **Standardize button heights across action rows.** PrimaryButton vs
-  ExportCsvButton vs Import. 20-30 min focused.
-
 - **Add email consent disclosure to `/alumni-signup`.**
 
 - **Find Chrome extension slowing Supabase calls locally.** Dev only.
@@ -333,38 +337,42 @@ Last updated: May 13, 2026 (post collapsible sidebar ship)
 
 ## 📋 To write up
 
-- **Collapsible sidebar ship (May 13).** Standard pattern, but a few
+- **Button height standardization (May 13).** Sounds trivial, but a
+  small lesson: the right fix was already in the codebase. I
+  initially thought we'd need to extract a `SecondaryButton`
+  primitive — turns out it existed. The actual fix was *deleting*
+  inline className strings and using the component. Lesson: scan
+  the design system before extracting new abstractions; the answer
+  might already be there. Also a small but real reminder that
+  inline className strings drift away from primitives faster than
+  you'd expect.
+
+- **Collapsible sidebar ship (May 13).** Standard pattern, a few
   honest design choices worth noting: hover-to-expand deliberately
-  skipped for v1 (extra state to manage; can add later); native
-  `title` tooltips accepted despite the 1s delay because nav icons
-  get learned quickly; pending-claims pill becoming a maroon dot when
-  collapsed (signal preservation in a smaller affordance). Small but
-  real polish work.
+  skipped for v1; native `title` tooltips accepted despite the 1s
+  delay because nav icons get learned quickly; pending-claims pill
+  becoming a maroon dot when collapsed (signal preservation in a
+  smaller affordance).
 
 - **`/data` dashboard ship (May 13, 2026).** Two product threads worth
-  capturing: (1) The "one map or two" question — initial instinct was
-  stacked / side-by-side, picked toggle for vertical real-estate
-  reasons; (2) the honest framing of "alumni geo rolls up via program
-  state" being explicitly acknowledged as a v1 limitation rather than
-  papered over (surfaced as a future toggle when contacts.current_state
-  is populated); (3) the engineering lesson of using a feature flag on
-  which view fits each entity vs. mass abstraction. Also a great visual
-  portfolio piece. Polish pass (custom tooltip + hover stroke + pointer
+  capturing: (1) The "one map or two" question — picked toggle for
+  vertical real-estate reasons; (2) the honest framing of "alumni
+  geo rolls up via program state" being explicitly acknowledged as a
+  v1 limitation (surfaced as a future toggle when
+  contacts.current_state is populated); (3) the engineering lesson
+  of using a feature flag on which view fits each entity vs. mass
+  abstraction. Polish pass (custom tooltip + hover stroke + pointer
   cursor) shipped same day as a separate commit.
 
 - **The active_programs-missing-country bug (May 13).** Mid-build, the
   dashboard 400'd because the view was created before the country
   column was added. Postgres views don't auto-update their column
   lists. Recreated the view inline. Concrete instance of the bigger
-  RLS-bypass-views issue. Lessons: views and their underlying tables
-  drift; the column-recreate question makes the RLS fix bigger but
-  also more valuable.
+  RLS-bypass-views issue.
 
 - **`is_test` as a product-design exercise (May 13).** Three pushbacks
   reshaped scope: category vs column for contacts, programs punted,
-  server-vs-client filtering policy. Lessons: "use what fits each
-  entity" beats "consistent infrastructure" when entities are
-  genuinely different.
+  server-vs-client filtering policy.
 
 - **RLS debugging bug story (May 12 morning).** The 403 on
   `/alumni-signup`.
@@ -381,6 +389,3 @@ Last updated: May 13, 2026 (post collapsible sidebar ship)
   moment: I assumed `src/features/dashboard/` was empty and wrote
   `DashboardPage.tsx` into it, blowing away the existing Home page.
   Recovered via git checkout, renamed to `src/features/data/DataPage.tsx`.
-  Lessons: when introducing a new feature folder, check it isn't
-  occupied; semantic names ("Dashboard" vs "Data") get reused across
-  pages and need disambiguation; git is your friend.
