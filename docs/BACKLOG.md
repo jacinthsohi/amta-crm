@@ -13,7 +13,7 @@ handoff docs.
 - 💭 DESIGN DISCUSSIONS — open product questions, no clear shape yet
 - ✅ SHIPPED — done, kept here for momentum / portfolio context
 
-Last updated: May 13, 2026 (morning — post is_test ship)
+Last updated: May 13, 2026 (morning — post is_test ship, pre dashboard build)
 
 ---
 
@@ -60,15 +60,7 @@ Last updated: May 13, 2026 (morning — post is_test ship)
   - Unblocks the US state heatmap on the upcoming `/data` dashboard
   - Migration: `migrations/20260512_programs_geo_data.sql`
 - **"Add judges" deep-link flow on Event detail page** (May 12, 2026)
-  - "Add judges" button on tournament event headers
-  - Deep-link with `?eventId={id}`; auto-checks event association,
-    pre-selects "Judge" position and category
-  - Contextual page reframing, header alias auto-mapping, CSS overflow fix
 - **Contacts CSV import flow** (May 12, 2026)
-  - 4-step wizard at `/contacts/import`
-  - Validated with 97-row Claremont CSV (31 imported, 66 skipped due to
-    missing email)
-  - Spec: `docs/specs/contacts-csv-import-mvp.md`
 - **Judges separated from Staff on Event detail page** (May 12, 2026)
 - **Alumni claims admin flow Phase 2 complete** (May 11–12, 2026)
 - **Contacts list default sort by first name** (May 12, 2026)
@@ -96,26 +88,18 @@ Last updated: May 13, 2026 (morning — post is_test ship)
   COUNT on the table = 2; sidebar shows 2 = admin is seeing everyone's
   conversations. View owner = `postgres` (confirmed via pg_views).
   
-  **Scope:** Likely affects all `public.active_*` views — `active_contacts`,
-  `active_events`, `active_committees`, `active_contact_categories`,
-  `active_event_documents`, `active_event_hosts`, `active_event_staff`,
-  `active_invitations`, `active_officer_terms`, `active_program_a*`,
-  others.
+  **Scope:** Likely affects all `public.active_*` views.
   
   **Not currently an incident:** Jacinth is the only real user. Becomes
   a real incident once a second user logs in.
   
   **Fix:** Audit every `public.active_*` view; recreate with
   `WITH (security_invoker = on)`. Single migration. Test pass on every
-  feature reading from active_* views. Document gotcha in migration
-  comment so future views don't repeat the pattern.
+  feature reading from active_* views.
   
   **Symptom artifact preserved:** Maggy's conversation
-  (`d953c4cb-e50f-490e-b2ee-89038eadf019`) NOT deleted from DB. Still
-  shows in sidebar, still un-deletable from UI. Visible reminder until
-  the proper fix lands.
-  
-  **Replaces bug B1.**
+  (`d953c4cb-e50f-490e-b2ee-89038eadf019`) NOT deleted. Visible reminder
+  until the proper fix lands.
 
 - **Email automation for invitations.** Currently copy/paste manual.
   Unblocks onboarding flow. Don't onboard new users until views RLS
@@ -136,29 +120,28 @@ Last updated: May 13, 2026 (morning — post is_test ship)
   3. Hybrid: filter-matched default + "Clear filters and export all"
   
   **Scope:** 2-3 hours including pagination, less if just export.
-  Touches ExportCsvButton (may need a `fetchAllRows()` callback) and
-  whatever pagination component lands.
 
 - **Add seasonal dimension to committee assignments + board membership.**
   AMTA operates on July-June seasons. Add `season` column to
-  `committee_assignments`. Same pattern for board membership. Split
-  Contact page into "Current committees" / "Past committees."
-  Half-day to full-day. Also implicates bug B2.
+  `committee_assignments`. UI: split Contact page into "Current
+  committees" / "Past committees." Half-day to full-day.
 
 - **Constrain `event_staff.position` to a canonical dropdown.** Avoids
-  free-text drift. Values: Judge, AMTA Representative, Tournament
-  Director, Tab Director, Judge Liaison, Host, Volunteer, Other. See
-  AMTA Rep design discussion.
+  free-text drift. See AMTA Rep design discussion.
 
-- **KPI / Data dashboard at `/data`.** 5 metric cards: Active programs,
-  Active alumni, Active board members, Pending invitations, Recent
-  contact additions. Pre-work: `board_terms` table currently empty.
-  `is_test` infrastructure DONE — dashboard can be built filtering on
-  Test category from day one. Geo data DONE — heatmap unblocked.
-  **NEXT UP.**
+- **KPI / Data dashboard at `/data`.** Three metric cards: Active
+  programs, Active alumni, Active board members (using Current Board
+  Member category as proxy for v1). Two heatmaps with toggle: Programs
+  per state, Alumni per state (alumni heatmap rolls up via their
+  program's state — see callout below). Pre-work: geo data DONE,
+  `is_test` infrastructure DONE. **CURRENTLY BUILDING.**
 
-- **Admin data-cleanup / dupe-merge tool.** Heuristic dupe detection
-  (email match, name + email-domain, similar names + shared program).
+- **Populate `board_terms` table + flesh out board member breakdown.**
+  Currently empty. Once populated, the Active Board Members card on
+  `/data` can show the director / first-year candidate / second-year
+  candidate breakdown that's more informative than a flat count.
+
+- **Admin data-cleanup / dupe-merge tool.** Heuristic dupe detection.
   Side-by-side comparison. Merge transferring all associations. Full
   session of focused work.
 
@@ -179,8 +162,16 @@ Last updated: May 13, 2026 (morning — post is_test ship)
 - **Expand alumni signup form fields.** Specific candidates:
   - **Pronouns** (newly captured)
   - **Start year** (also fixes the `start_year = end_year` tech debt)
-  - Roles within program
-  - Current professional context
+  - **Current city / state** (newly captured May 13). Today, an alum's
+    geo identity rolls up via their program's state — Yale alum = CT
+    even if they live in California. For community-building, regional
+    events, and donor cultivation, the alum's *current* location matters
+    more than their college's location. Add a `current_state` (and
+    optionally `current_city`) column on `contacts`. Once populated,
+    the alumni heatmap on `/data` could optionally toggle between
+    "by program state" and "by current state" for a richer view.
+  - Roles within program (board member? captain? competitor?)
+  - Current professional context (career field, job title)
   - Decision: required vs optional per field. Default to optional
     except start year.
 
@@ -193,8 +184,7 @@ Last updated: May 13, 2026 (morning — post is_test ship)
 
 - **Profile / Settings page** separate from Contact record.
 
-- **CSV import for Programs.** Symmetric to existing export. No longer
-  urgent since geo data was loaded via SQL migration, but worth building.
+- **CSV import for Programs.** Symmetric to existing export.
 
 - **Revamp Home page.** Focus on user workflow, not stats. Stats go to
   `/data`.
@@ -213,18 +203,12 @@ Last updated: May 13, 2026 (morning — post is_test ship)
 
 - **`api/meeting-brief.ts` test-data filter follow-up.** When `is_test`
   shipped (May 13), we deliberately scoped out `meeting-brief.ts`
-  because the feature is rarely used (portfolio piece) and we wanted to
-  ship the higher-leverage Ask AI filter first. If meeting-brief gets
-  real usage, add the same `loadTestContactIds()` + per-tool filter
-  pattern that's in `api/ask.ts`. Probably 20-30 min, easy to mirror
-  from the ask.ts changes.
+  because the feature is rarely used (portfolio piece). If usage grows,
+  mirror the `loadTestContactIds()` + per-tool filter pattern from
+  `api/ask.ts`. 20-30 min.
 
-- **Standardize button heights across action rows.** Visible on
-  Programs: ExportCsvButton (`px-2.5 py-1.5 text-sm`) is shorter than
-  PrimaryButton. Same baseline mismatch on Contacts but masked by
-  Import button bridging visually. Fix: measure PrimaryButton in
-  `src/components/Buttons.tsx`, update ExportCsvButton + Import to
-  match, optional `<SecondaryButton>` primitive. 20-30 min focused.
+- **Standardize button heights across action rows.** PrimaryButton vs
+  ExportCsvButton vs Import. 20-30 min focused.
 
 - **Add email consent disclosure to `/alumni-signup`.**
 
@@ -234,8 +218,7 @@ Last updated: May 13, 2026 (morning — post is_test ship)
 
 - **Clean up 308 latent TS errors incrementally.**
 
-- **Add `npm run build` step to pre-push workflow.** Catches the
-  Vercel-strict-vs-Vite-permissive class of bugs locally.
+- **Add `npm run build` step to pre-push workflow.**
 
 ---
 
@@ -247,159 +230,44 @@ Last updated: May 13, 2026 (morning — post is_test ship)
 - **B3:** Can't remove program affiliation from a Contact page. Two
   layers (Contact page UI missing; Program page also broken/missing).
 - **B4:** Category multi-select dropdown perceived-slow on subsequent
-  selections. ~10-min investigation should reveal it.
+  selections.
 
 ---
 
 ## 💭 Design discussions
 
 - **AMTA Representative: category or role? (Or both, with a
-  relationship constraint?)** Quick-fix instinct was "add to categories
-  list." Real question: is AMTA Rep a durable trait (like Alumni) or a
-  per-event role (like Judge at one event)? Practical answer: both, but
-  the modeling matters.
-  
-  **Four options:**
-  1. Just add Rep as a category. Loses event-level connection.
-  2. Category + position with soft validation rule: "to add someone as
-     AMTA Rep on an event, they must have the category." *(Lean.)*
-  3. Treat AMTA Reps as a separate top-level entity on Events
-     (parallel to Staff and Judges), reflecting central-vs-host supply.
-  4. Just add the category, don't sweat the modeling. Defensible.
-  
-  **Lean:** option 2, with option 3 as later refinement when judge
-  counts grow.
-  
-  **Dependencies:** if option 2 or 3, do this alongside the position
-  dropdown work. Decision needed by then.
+  relationship constraint?)** Four options laid out; lean is "category
+  + position with soft validation." Decision needed before position
+  dropdown work.
 
 - **📧 Secondary email on contacts: how do we model it?** Two converging
   use cases: alumni (school + personal), workspace + personal in
-  general.
-  
-  **Five open questions:**
-  1. One extra column or related `contact_emails` table? *(Lean: start
-     simple, migrate later if needed.)*
-  2. Label scheme — school/personal, work/personal, free-text?
-     *(Lean: implicit if one column; small dropdown if relational.)*
-  3. Which email is primary and what's it operationally? *(Primary =
-     list view + dupe detection key + AI surfacing.)*
-  4. Alumni signup form: "second email (optional)" or labeled "School
-     email" + "Personal email"? *(Lean: labeled fields.)*
-  5. Migration: existing email becomes primary. No backfill needed.
-  
-  **Scope:** Simple = 1-2 hours. Flexible (related table) = 4-6 hours.
-  
-  **Decision needed by:** before expanding alumni signup form.
+  general. Five open questions; lean is "start simple with one extra
+  column." Decision needed before expanding alumni signup form.
 
 - **📚 Institutional memory: communications archive vs. richer
-  Interactions.** Captured May 12, 2026. What started as "let's add
-  attachments to Interactions" is actually a bigger question about
-  what the CRM is FOR.
-  
-  **The framing:** AMTA's comms happen in Gmail and Mailchimp; those
-  will continue. The real pain: *board accounts turn over, Mailchimp
-  campaigns get hard to find years later, "what did we send to alumni
-  last May?" requires institutional knowledge that walks out the door*.
-  The CRM could be the institutional memory layer that survives
-  successions.
-  
-  **Use case crystallized:** "Next year when I'm writing the 2027
-  board election results email, I want to find the 2026 version,
-  duplicate it, tweak the date." Same for annual judge thank-you's,
-  alumni newsletters, etc. This is a *playbook* / *template library*
-  with audience context, not an email client.
-  
-  **Key insight: curation, not capture.** Most logged comms will be
-  reusable templates worth preserving. Selectively log the
-  annual/quarterly/event-tied ones; ignore the ephemeral or
-  confidential ones.
-  
-  **Important reframe (May 12, end of session):** AMTA uses Notion as
-  internal knowledge base. Playbooks / how-tos / runbooks belong there.
-  Some marketing-style alumni emails may still make sense to log in CRM
-  for the "audience context" piece, but the broader playbook framing
-  pulls toward Notion. Parking-lotted as a result.
-  
-  **Three threads in the original ask, separated:**
-  
-  *Thread 1: Richer Interaction records.* Today probably
-  `{contact_id, date, type, notes}`. Ask: PDF/HTML upload (Gmail or
-  Mailchimp export), pasted email body, to/from/cc/bcc.
-  
-  *Thread 2: Contact groups for multi-contact logging.* Today
-  Interaction is per-contact. AMTA has real distribution lists
-  (board-all@, alumni list). Manual attachment to 30 contacts is
-  friction.
-  
-  *Thread 3: Different mental model.* Per-contact ("I emailed Mike")
-  vs. broadcast-level ("we sent X to all current board members"). Same
-  entity or different?
-  
-  **Existing-infrastructure check (important):** Before adding a new
-  "contact group" concept, check whether existing groupings serve:
-  - "All current board members" → `category = 'Current Board Member'`
-  - "Budget Committee" → committee assignment
-  - "All alumni" → `category = 'Alumni'`
-  - "Judges for Claremont 2026" → event_staff for that event
-  
-  If existing groupings handle ~90% of cases, what's needed is an
-  Interaction (or Communication) that targets a *query* (category,
-  committee, event), NOT a new "contact group" entity. Need 3+ real
-  examples of ad-hoc groups that don't fit before adding the entity.
-  
-  **Four options:**
-  
-  1. **Enhanced Interaction (lightweight).** Keep Interaction; add
-     file attachment, formatted body, optional audience reference
-     (category / committee / event). One Interaction can be a
-     broadcast. Appears on each audience member's contact page.
-  2. **New "Communications" / "Campaigns" entity.** First-class archive
-     of broadcasted comms. Browsable at `/communications`. Contacts get
-     a "Received campaigns" tab.
-  3. **Both, with different intents.** Interactions stay 1:1.
-     Campaigns are broadcast archive. No overlap.
-  4. **Just attach files to Interactions, skip groups.** Minimum viable.
-  
-  **Lean:** option 2 (separate Communications entity) IF/WHEN this is
-  built. But given the Notion reframing, this whole thread is lower
-  priority — most of the "institutional memory" intent goes to Notion.
-  
-  **Decision needed by:** not blocking anything else. Lower-priority
-  parking lot.
+  Interactions.** Reframed May 12 evening: AMTA uses Notion as
+  knowledge base, so playbooks live there. Some marketing-style alumni
+  emails may still warrant CRM logging for audience context. Lower
+  priority parking lot.
 
 ---
 
 ## 🧊 ICEBOX
 
 - **`is_test` flag on programs.** Punted during May 13 is_test
-  infrastructure work. Reasoning: only 1 test program (Midlands State),
-  +1 in stats is small known overhead, programs don't have a category
-  system to reuse, dedicated column was the only option and felt
-  asymmetric with the contacts-via-category approach. Revisit if test
-  programs proliferate or if the +1 becomes painful.
+  infrastructure work. Only 1 test program (Midlands State); +1 in
+  stats is small known overhead. Revisit if test programs proliferate.
 
 - **Allow emailless contacts (or a different entity for them).**
-  Surfaced May 12, 2026 from Claremont CSV import: 97 judges, only 31
-  with emails, 66 skipped.
-  
-  **Three real paths:**
-  1. Make email optional. Breaks dupe detection. Accumulates duplicates
-     over time.
-  2. Separate "Event Participants" / "Anonymous Judges" entity. Adds
-     schema complexity.
-  3. Stay strict; improve import surface (group "skipped, no email"
-     rows, downloadable CSV, admin follows up offline). *(Lean.)*
-  
-  **Lean:** option 3 — incomplete-source-data problem, not schema
-  problem. Weakening Contacts identity model compounds badly at scale.
+  Surfaced May 12 from Claremont CSV import. Lean: option 3 (stay
+  strict; improve import surface).
 
 - **Recover alumni-claims-admin-mvp.md spec.** Low priority since
   feature is built.
 
-- **Tabbed Event detail UI (v2 for judges).** When judge counts grow
-  into hundreds-per-event. Currently judges-last on same page works at
-  small-to-mid scale.
+- **Tabbed Event detail UI (v2 for judges).** When judge counts grow.
 
 - **Navigator.locks bug writeup.** Felt inauthentic to publish under
   user name alone.
@@ -412,48 +280,25 @@ Last updated: May 13, 2026 (morning — post is_test ship)
 
 ## 📋 To write up
 
-Docs/portfolio work to capture while fresh.
-
-- **`is_test` as a product-design exercise (May 13, 2026).** Started as
-  "add an is_test column to programs and contacts" — a clean,
-  conventional schema migration. Three real pushbacks reshaped it into
-  something tighter and more reusable. (1) Category vs column for
-  contacts: reuse existing categories infrastructure instead of new
-  column. Same admin UX, zero schema work. (2) Programs scope:
-  programs don't have categories; adding `is_test` column there
-  recreates the asymmetry we just avoided. Punted; documented +1 in
-  stats. (3) Server vs client filtering policy: UI toggle for admin
-  convenience; AI outputs ALWAYS filter, regardless of toggle. Lessons:
-  "use what fits each entity" beats "consistent infrastructure" when
-  the entities are genuinely different; the right scope often emerges
-  from honest pushbacks; "we can punt this" is a real engineering
-  skill.
+- **`is_test` as a product-design exercise (May 13).** Three pushbacks
+  reshaped scope: category vs column for contacts, programs punted,
+  server-vs-client filtering policy. Lessons: "use what fits each
+  entity" beats "consistent infrastructure" when entities are
+  genuinely different.
 
 - **RLS debugging bug story (May 12 morning).** The 403 on
-  `/alumni-signup`. Correct first hypothesis, walked back wrongly when
-  "incognito test" seemed to reproduce, discovered incognito was
-  carrying an authenticated session. Lessons: confirm test setup
-  before trusting results; RLS scoped per role; apikey vs Authorization
-  headers in Supabase.
+  `/alumni-signup`. Lessons: confirm test setup before trusting
+  results; RLS scoped per role.
 
 - **Postgres views bypassing RLS bug story (May 12 evening).** Started
-  as "delete button doesn't work." DELETE returns 204 (UPDATE 0 rows
-  affected via RLS). Row's auth_user_id belongs to Maggy Randels' user
-  account → real question becomes "why is her conversation in my
-  sidebar." RLS policies correct. View owner = `postgres` (superuser),
-  bypasses RLS by default. Likely affects every `active_*` view.
-  Lessons: when RLS LOOKS correct but data leaks, check the views;
-  superuser-owned view + no `security_invoker` is a real footgun;
-  "tiny bug" was tip of architectural issue; choosing NOT to patch the
-  symptom can be right.
+  as "delete button doesn't work." View owner = `postgres` bypasses
+  RLS by default. Lessons: when RLS LOOKS correct but data leaks,
+  check the views.
 
-- **CSV import StrictMode bug story (May 12).** Processing hung at
-  "0 of 1" despite successful Supabase calls. React 18 StrictMode
-  double-mount + cleanup flag race. Fix: drop the flag, use startedRef.
-  Lessons: StrictMode catches real bugs; for single-shot async,
+- **CSV import StrictMode bug story (May 12).** React 18 StrictMode
+  double-mount + cleanup flag race. Lessons: for single-shot async,
   refs > flags.
 
-- **CSV import as product-design exercise (May 12).** Dupe story
-  (email match → additive), position default (Judge), entry-point UX
-  (two buttons not split dropdown), row cap (500), tournament-host
-  CSV alias system. Each decision pushed back on over-build.
+- **CSV import as product-design exercise (May 12).** Dupe story,
+  position default, entry-point UX, row cap, tournament-host CSV
+  alias system. Each decision pushed back on over-build.
