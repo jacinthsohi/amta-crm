@@ -1,14 +1,20 @@
 // =============================================================================
-// src/features/dashboard/StateHeatmap.tsx
+// src/features/data/StateHeatmap.tsx
 // =============================================================================
 // US state heatmap with a Programs / Alumni toggle. Uses react-simple-maps
 // for the SVG map rendering and a public topojson source for state shapes.
 //
+// Interactivity:
+//   - Hover a state: state stroke darkens to maroon, tooltip appears near
+//     cursor with "State name — N programs/alumni"
+//   - Cursor changes to pointer (signals interactivity even though click
+//     doesn't navigate yet — that's a future enhancement once /programs
+//     and /contacts support state filtering)
+//   - States with 0 data still show their tooltip; this confirms the map
+//     is working and the count is genuinely zero
+//
 // Color scale: maroon-tinted, light to dark based on count. Zero = light
 // zinc fill so empty states are visible but visually quiet.
-//
-// Tooltip: native title (browser-rendered) is the v1. Lower scope than a
-// custom React tooltip and still useful. Can upgrade later.
 // =============================================================================
 
 import { useMemo, useState } from "react";
@@ -19,12 +25,19 @@ import {
 } from "react-simple-maps";
 
 // US states topojson from the react-simple-maps recommended public source.
-// This is a CDN-hosted file, ~150KB, served via Cloudflare. We could also
-// vendor it locally if we wanted to avoid the runtime fetch.
+// This is a CDN-hosted file, ~150KB, served via jsDelivr.
 const US_STATES_GEO_URL =
   "https://cdn.jsdelivr.net/npm/us-atlas@3/states-10m.json";
 
 type ViewMode = "programs" | "alumni";
+
+type TooltipState = {
+  visible: boolean;
+  x: number;
+  y: number;
+  stateName: string;
+  count: number;
+};
 
 export type StateHeatmapProps = {
   programsByState: Map<string, number>;
@@ -36,6 +49,13 @@ export function StateHeatmap({
   alumniByState,
 }: StateHeatmapProps) {
   const [mode, setMode] = useState<ViewMode>("programs");
+  const [tooltip, setTooltip] = useState<TooltipState>({
+    visible: false,
+    x: 0,
+    y: 0,
+    stateName: "",
+    count: 0,
+  });
 
   const activeData = mode === "programs" ? programsByState : alumniByState;
   const maxCount = useMemo(
@@ -43,8 +63,36 @@ export function StateHeatmap({
     [activeData],
   );
 
+  // -----------------------------------------------------------------------------
+  // Tooltip event handlers
+  // -----------------------------------------------------------------------------
+
+  function handleMouseEnter(stateName: string, count: number) {
+    return (e: React.MouseEvent) => {
+      setTooltip({
+        visible: true,
+        x: e.clientX,
+        y: e.clientY,
+        stateName,
+        count,
+      });
+    };
+  }
+
+  function handleMouseMove(e: React.MouseEvent) {
+    // Update position only — keep the same state/count from the enter event.
+    // This avoids re-reading geo props on every pixel move.
+    setTooltip((prev) =>
+      prev.visible ? { ...prev, x: e.clientX, y: e.clientY } : prev,
+    );
+  }
+
+  function handleMouseLeave() {
+    setTooltip((prev) => ({ ...prev, visible: false }));
+  }
+
   return (
-    <div className="rounded-lg border border-zinc-200 bg-white p-5">
+    <div className="rounded-lg border border-zinc-200 bg-white p-5 relative">
       <div className="flex items-center justify-between mb-4">
         <div>
           <h2 className="text-sm font-semibold text-zinc-900">
@@ -80,35 +128,85 @@ export function StateHeatmap({
                     fill={fill}
                     stroke="#fff"
                     strokeWidth={0.5}
+                    onMouseEnter={handleMouseEnter(stateName, count)}
+                    onMouseMove={handleMouseMove}
+                    onMouseLeave={handleMouseLeave}
                     style={{
                       default: { outline: "none" },
                       hover: {
                         outline: "none",
-                        fill: hoverColorForCount(count, maxCount),
-                        cursor: count > 0 ? "default" : "default",
+                        fill,
+                        stroke: "#70172a",
+                        strokeWidth: 1.5,
+                        cursor: "pointer",
                       },
                       pressed: { outline: "none" },
                     }}
-                  >
-                    <title>
-                      {stateName}: {count}{" "}
-                      {mode === "programs"
-                        ? count === 1
-                          ? "program"
-                          : "programs"
-                        : count === 1
-                          ? "alum"
-                          : "alumni"}
-                    </title>
-                  </Geography>
+                  />
                 );
               })
             }
           </Geographies>
         </ComposableMap>
+
+        {/* Floating tooltip — follows cursor, renders only when visible */}
+        {tooltip.visible && (
+          <HeatmapTooltip
+            x={tooltip.x}
+            y={tooltip.y}
+            stateName={tooltip.stateName}
+            count={tooltip.count}
+            mode={mode}
+          />
+        )}
       </div>
 
       <Legend mode={mode} maxCount={maxCount} />
+    </div>
+  );
+}
+
+// -----------------------------------------------------------------------------
+// Tooltip
+// -----------------------------------------------------------------------------
+// Rendered as a fixed-position element near the cursor. Using `position: fixed`
+// + clientX/Y means we don't have to translate coordinates into the SVG's
+// coordinate system. Slight offset so the cursor doesn't overlap the tooltip.
+
+function HeatmapTooltip({
+  x,
+  y,
+  stateName,
+  count,
+  mode,
+}: {
+  x: number;
+  y: number;
+  stateName: string;
+  count: number;
+  mode: ViewMode;
+}) {
+  const noun =
+    mode === "programs"
+      ? count === 1
+        ? "program"
+        : "programs"
+      : count === 1
+        ? "alum"
+        : "alumni";
+
+  return (
+    <div
+      className="fixed pointer-events-none z-50 rounded-md bg-zinc-900 text-white px-2.5 py-1.5 text-xs shadow-lg whitespace-nowrap"
+      style={{
+        left: x + 12,
+        top: y + 12,
+      }}
+    >
+      <div className="font-medium">{stateName}</div>
+      <div className="text-zinc-300 tabular-nums">
+        {count.toLocaleString()} {noun}
+      </div>
     </div>
   );
 }
@@ -173,7 +271,6 @@ function ToggleButton({
 function Legend({ mode, maxCount }: { mode: ViewMode; maxCount: number }) {
   if (maxCount === 0) return null;
 
-  // Show 5 swatches: 0, 25%, 50%, 75%, 100% of max
   const stops = [0, 0.25, 0.5, 0.75, 1].map((p) => Math.round(p * maxCount));
 
   return (
@@ -208,12 +305,8 @@ function Legend({ mode, maxCount }: { mode: ViewMode; maxCount: number }) {
 function colorForCount(count: number, maxCount: number): string {
   if (maxCount === 0 || count === 0) return "#f4f4f5"; // zinc-100
 
-  const ratio = Math.sqrt(count / maxCount); // sqrt for visual sensitivity at low counts
+  const ratio = Math.sqrt(count / maxCount);
 
-  // Interpolate between zinc-100 (very light) and maroon-700 deep.
-  // Maroon brand color is #70172a. We'll go from #fde8ec → #70172a.
-  // Simpler approach: blend two colors in HSL.
-  // For now, do a simple RGB interpolation between two endpoints.
   const lo = { r: 253, g: 232, b: 236 }; // light maroon tint
   const hi = { r: 112, g: 23, b: 42 }; // brand maroon #70172a
 
@@ -222,11 +315,4 @@ function colorForCount(count: number, maxCount: number): string {
   const b = Math.round(lo.b + (hi.b - lo.b) * ratio);
 
   return `rgb(${r}, ${g}, ${b})`;
-}
-
-function hoverColorForCount(count: number, maxCount: number): string {
-  if (maxCount === 0 || count === 0) return "#e4e4e7"; // zinc-200 on hover
-  // Slightly darker version of the fill
-  const base = colorForCount(count, maxCount);
-  return base; // For now, keep the same. Could darken later.
 }
