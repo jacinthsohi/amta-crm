@@ -36,6 +36,7 @@ export default function AlumniSignupPage() {
   const [firstName, setFirstName] = useState("");
   const [lastName, setLastName] = useState("");
   const [email, setEmail] = useState("");
+  const [secondaryEmail, setSecondaryEmail] = useState("");
   const [graduationYear, setGraduationYear] = useState("");
   const [programId, setProgramId] = useState("");
   const [phone, setPhone] = useState("");
@@ -81,11 +82,6 @@ export default function AlumniSignupPage() {
 
   // -----------------------------------------------------------------------
   // Signed-in redirect view
-  // -----------------------------------------------------------------------
-  // Rendered when an authenticated user lands on the public form. The RLS
-  // policy on alumni_claims only permits inserts by the `anon` role, so a
-  // submission from a signed-in user would 403. Surface the situation
-  // clearly instead of letting them hit the error.
   // -----------------------------------------------------------------------
   if (session) {
     return (
@@ -138,6 +134,11 @@ export default function AlumniSignupPage() {
     if (!email.trim()) return "Email is required.";
     if (!/^\S+@\S+\.\S+$/.test(email.trim()))
       return "Please enter a valid email address.";
+    if (
+      secondaryEmail.trim() &&
+      !/^\S+@\S+\.\S+$/.test(secondaryEmail.trim())
+    )
+      return "Please enter a valid secondary email address (or leave it blank).";
     if (!graduationYear) return "Graduation year is required.";
     const yr = Number(graduationYear);
     if (!Number.isInteger(yr) || yr < minYear || yr > maxYear)
@@ -169,6 +170,7 @@ export default function AlumniSignupPage() {
         first_name: firstName.trim(),
         last_name: lastName.trim(),
         email: email.trim().toLowerCase(),
+        secondary_email: secondaryEmail.trim().toLowerCase() || null,
         graduation_year: Number(graduationYear),
         program_id: programId,
         phone: phone.trim() || null,
@@ -296,6 +298,19 @@ export default function AlumniSignupPage() {
               />
             </FormField>
 
+            <FormField
+              label="Secondary email (optional)"
+              hint="If you have a personal email in addition to a school email (or vice versa), we'll keep both on file. We may use either to reach you."
+            >
+              <input
+                type="email"
+                value={secondaryEmail}
+                onChange={(e) => setSecondaryEmail(e.target.value)}
+                className="form-input"
+                autoComplete="email"
+              />
+            </FormField>
+
             <FormField label="Graduation year" required>
               <input
                 type="number"
@@ -410,10 +425,12 @@ export default function AlumniSignupPage() {
 function FormField({
   label,
   required,
+  hint,
   children,
 }: {
   label: string;
   required?: boolean;
+  hint?: string;
   children: React.ReactNode;
 }) {
   return (
@@ -423,6 +440,9 @@ function FormField({
         {required && <span className="text-maroon-700 ml-0.5">*</span>}
       </span>
       {children}
+      {hint && (
+        <p className="text-[11px] text-zinc-500 mt-1 leading-relaxed">{hint}</p>
+      )}
     </label>
   );
 }

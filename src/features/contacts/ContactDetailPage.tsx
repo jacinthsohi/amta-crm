@@ -223,9 +223,18 @@ function Hero({
           </div>
           <div className="flex items-center gap-5 text-sm text-zinc-600 mb-3 flex-wrap">
             {c.email && (
-              <div className="flex items-center gap-1.5">
+              <div className="flex items-center gap-1.5" title="Primary email">
                 <Mail size={13} className="text-zinc-400" />
                 <span>{c.email}</span>
+              </div>
+            )}
+            {c.secondary_email && (
+              <div
+                className="flex items-center gap-1.5 text-xs text-zinc-500"
+                title="Secondary email"
+              >
+                <Mail size={12} className="text-zinc-300" />
+                <span>{c.secondary_email}</span>
               </div>
             )}
             {c.phone && (

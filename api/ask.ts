@@ -41,6 +41,13 @@ import { createClient } from "@supabase/supabase-js";
  *   Direct lookups (get_contact_details) deliberately bypass the filter —
  *   if an admin asks about a specific contact by ID, we answer regardless
  *   of whether it's a test record.
+ *
+ * Email search:
+ *   search_contacts supports an `email_query` input that matches against
+ *   BOTH primary and secondary email columns. This lets Claude find a
+ *   contact whether they were given the work email or the personal email.
+ *   Secondary email is also included in the returned contact data so Claude
+ *   can surface it when relevant.
  */
 
 export const config = {
@@ -81,14 +88,7 @@ function getServiceClient() {
 
 /**
  * Fetches the set of contact IDs tagged with the "Test" category. Used to
- * filter test data out of AI responses. Returns a Set for O(1) lookups
- * during result filtering.
- *
- * If the "Test" category doesn't exist or no contacts are tagged, returns
- * an empty Set (filter is a no-op).
- *
- * Called once per request inside runAgenticLoop and passed to tool
- * implementations to avoid re-fetching on every tool call.
+ * filter test data out of AI responses.
  */
 const TEST_CATEGORY_NAME = "Test";
 
@@ -115,24 +115,15 @@ async function loadTestContactIds(
 // Tool definitions — these are sent to Claude so it knows what's available
 // -----------------------------------------------------------------------------
 
-/**
- * Defining tools well is the core skill of building agentic systems.
- * Each tool needs:
- *   - A clear name (verb-noun pattern)
- *   - A description that tells Claude WHEN to use it (not just what it does)
- *   - A precise input_schema with examples in descriptions
- *
- * Claude reads these descriptions to decide which tool to call. Vague
- * descriptions lead to wrong tool selection or unnecessary calls.
- */
 const TOOLS: Anthropic.Tool[] = [
   {
     name: "search_contacts",
     description:
       "Search for contacts in the AMTA CRM by various filters. Use this when " +
       "the user asks about people in general, or when filtering by board " +
-      "status, categories, or affiliations. Returns up to 50 contacts with " +
-      "basic info. Use get_contact_details for richer per-contact data.",
+      "status, categories, affiliations, or email address. Returns up to 50 " +
+      "contacts with basic info including both their primary and secondary " +
+      "emails (if set). Use get_contact_details for richer per-contact data.",
     input_schema: {
       type: "object",
       properties: {
@@ -141,6 +132,14 @@ const TOOLS: Anthropic.Tool[] = [
           description:
             "Optional partial name match (case insensitive). Useful when user " +
             "names a specific person.",
+        },
+        email_query: {
+          type: "string",
+          description:
+            "Optional partial email match (case insensitive). Searches BOTH " +
+            "the primary and secondary email columns, so it finds a contact " +
+            "whether the user knows their work email or personal email. Use " +
+            "this when the user provides an email address.",
         },
         is_current_board: {
           type: "boolean",
@@ -232,6 +231,7 @@ async function executeSearchContacts(
   testContactIds: Set<string>,
   args: {
     name_query?: string;
+    email_query?: string;
     is_current_board?: boolean;
     category_name?: string;
     program_name?: string;
@@ -239,24 +239,18 @@ async function executeSearchContacts(
 ): Promise<unknown> {
   let query = supabase
     .from("active_contacts")
-    .select("id, first_name, last_name, email, has_board_history")
+    .select("id, first_name, last_name, email, secondary_email, has_board_history")
     .limit(50);
 
   if (args.name_query) {
-    // Match the query against first name, last name, OR the concatenated
-    // full name "first last". Split the query into tokens so "Justin
-    // Bernstein" matches a row where first=Justin and last=Bernstein.
     const q = args.name_query.trim();
     const tokens = q.split(/\s+/).filter(Boolean);
 
     if (tokens.length === 1) {
-      // Single token: match if it appears in either name
       query = query.or(
         `first_name.ilike.%${tokens[0]}%,last_name.ilike.%${tokens[0]}%`,
       );
     } else {
-      // Multi-token: match if FIRST token is in first_name AND LAST token
-      // is in last_name. Handles "Justin Bernstein", "John Smith Jr." etc.
       const first = tokens[0];
       const last = tokens[tokens.length - 1];
       query = query
@@ -265,13 +259,23 @@ async function executeSearchContacts(
     }
   }
 
+  // Email search across both primary and secondary email columns. PostgREST's
+  // `.or()` builds an OR over the comma-separated conditions, so this matches
+  // either column.
+  if (args.email_query) {
+    const eq = args.email_query.trim();
+    query = query.or(
+      `email.ilike.%${eq}%,secondary_email.ilike.%${eq}%`,
+    );
+  }
+
   const { data: contacts, error } = await query;
   if (error) return { error: error.message };
   if (!contacts) return { contacts: [] };
 
   let results = contacts;
 
-  // Filter by category if requested (requires a join — easier in JS at this scale)
+  // Filter by category if requested
   if (args.category_name) {
     const { data: categoryRows } = await supabase
       .from("active_contact_categories")
@@ -341,7 +345,6 @@ async function executeSearchContacts(
   }
 
   // Filter out test contacts — AI outputs should never include test data.
-  // See header comment on test-data filtering for the reasoning.
   results = results.filter((c: any) => !testContactIds.has(c.id));
 
   return {
@@ -350,6 +353,7 @@ async function executeSearchContacts(
       id: c.id,
       name: `${c.first_name} ${c.last_name}`,
       email: c.email,
+      secondary_email: c.secondary_email,
       has_board_history: c.has_board_history,
     })),
   };
@@ -359,13 +363,10 @@ async function executeGetContactDetails(
   supabase: ServiceClient,
   args: { contact_id: string },
 ): Promise<unknown> {
-  // Note: this deliberately does NOT filter test contacts. If an admin asks
-  // Claude about a specific contact by ID, we return it regardless of
-  // whether it's tagged Test. The filtering only applies to list/search
-  // tools where test data would otherwise leak silently.
+  // Note: this deliberately does NOT filter test contacts.
   const { data: contact, error } = await supabase
     .from("active_contacts")
-    .select("id, first_name, last_name, email, phone, ai_summary")
+    .select("id, first_name, last_name, email, secondary_email, phone, ai_summary")
     .eq("id", args.contact_id)
     .maybeSingle();
 
@@ -439,6 +440,7 @@ async function executeGetContactDetails(
     id: contact.id,
     name: `${contact.first_name} ${contact.last_name}`,
     email: contact.email,
+    secondary_email: contact.secondary_email,
     phone: contact.phone,
     ai_summary: contact.ai_summary,
     officer_terms: officerTermsRes.data ?? [],
@@ -486,9 +488,6 @@ async function executeGetCommitteeMembers(
     return { committee_id: args.committee_id, members: [] };
   }
 
-  // Filter test contacts out of the assignment list before we fetch their
-  // details — saves a query AND prevents test data from appearing in
-  // committee member lists.
   const visibleAssignments = assignments.filter(
     (a: any) => !testContactIds.has(a.contact_id),
   );
@@ -571,6 +570,9 @@ When answering:
   For names, try just the first name or just the last name. For topics, try \
   related keywords. Only conclude something doesn't exist after 2-3 reasonable \
   search variations.
+- If the user gives an email address, use the search_contacts email_query \
+  field. It searches both primary AND secondary emails, so it works whether \
+  the user knows the work email or personal email.
 - Be concise. Lead with the answer, then explain reasoning briefly.
 - You may use light markdown (**bold** for names/titles, bullet lists, line \
   breaks for readability). The frontend renders markdown.
@@ -599,10 +601,10 @@ from the user. If you didn't reference any contacts, write: CONTACT_IDS: none`;
 type ToolCallRecord = {
   tool: string;
   input: any;
-  output_summary: string; // Short string for UI display
+  output_summary: string;
 };
 
-const MAX_ITERATIONS = 10; // Safety cap on tool-use loop
+const MAX_ITERATIONS = 10;
 
 async function runAgenticLoop(
   supabase: ServiceClient,
@@ -616,9 +618,6 @@ async function runAgenticLoop(
   const toolCalls: ToolCallRecord[] = [];
   let workingMessages = [...messages];
 
-  // Load the set of test contact IDs once per request and reuse across all
-  // tool calls. Tools that list/search contacts use this to filter test
-  // data out of AI responses.
   const testContactIds = await loadTestContactIds(supabase);
 
   for (let i = 0; i < MAX_ITERATIONS; i++) {
@@ -630,13 +629,11 @@ async function runAgenticLoop(
       messages: workingMessages,
     });
 
-    // Append assistant's response to message history
     workingMessages.push({
       role: "assistant",
       content: response.content,
     });
 
-    // If Claude is done (no tool calls), we're finished
     if (response.stop_reason === "end_turn") {
       const textBlocks = response.content.filter(
         (b): b is Anthropic.TextBlock => b.type === "text",
@@ -645,7 +642,6 @@ async function runAgenticLoop(
       return { final_text: finalText, tool_calls: toolCalls, full_messages: workingMessages };
     }
 
-    // Otherwise, execute any tool_use blocks and feed back results
     if (response.stop_reason === "tool_use") {
       const toolUseBlocks = response.content.filter(
         (b): b is Anthropic.ToolUseBlock => b.type === "tool_use",
@@ -661,7 +657,6 @@ async function runAgenticLoop(
           toolUse.input,
         );
 
-        // Build a short summary string for the UI
         const summary = summarizeToolCall(toolUse.name, toolUse.input, result);
         toolCalls.push({
           tool: toolUse.name,
@@ -676,20 +671,15 @@ async function runAgenticLoop(
         });
       }
 
-      // Feed tool results back to Claude
       workingMessages.push({
         role: "user",
         content: toolResults,
       });
-
-      // Loop continues — Claude may call more tools or respond
     } else {
-      // Unexpected stop reason — break out with whatever we have
       break;
     }
   }
 
-  // If we hit the iteration cap, pull the last text we have
   const lastAssistantMessage = workingMessages
     .filter((m) => m.role === "assistant")
     .pop();
@@ -715,6 +705,7 @@ function summarizeToolCall(name: string, input: any, result: any): string {
     case "search_contacts": {
       const filters: string[] = [];
       if (input.name_query) filters.push(`name "${input.name_query}"`);
+      if (input.email_query) filters.push(`email "${input.email_query}"`);
       if (input.category_name) filters.push(`category "${input.category_name}"`);
       if (input.is_current_board) filters.push("current board");
       if (input.program_name) filters.push(`program "${input.program_name}"`);
@@ -740,18 +731,12 @@ function extractContactIds(text: string): {
   cleanText: string;
   contactIds: string[];
 } {
-  // Find the CONTACT_IDS marker. Match everything from the marker to either
-  // a blank line or end of string — UUIDs can span multiple lines.
   const match = text.match(/CONTACT_IDS:\s*([\s\S]*?)(?:\n\s*\n|$)/);
   if (!match) return { cleanText: text, contactIds: [] };
 
-  // Extract all UUIDs anywhere in the matched section, regardless of
-  // brackets, line breaks, or other formatting.
   const uuidPattern = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi;
   const ids = match[1].match(uuidPattern) ?? [];
 
-  // Strip the entire CONTACT_IDS section (marker + all UUIDs/whitespace
-  // until blank line or EOF) from the displayed text.
   const cleanText = text
     .replace(/\s*CONTACT_IDS:\s*[\s\S]*?(?=\n\s*\n|$)/, "")
     .trim();
@@ -768,13 +753,11 @@ export default async function handler(request: Request): Promise<Response> {
     return jsonError(405, "Method not allowed. Use POST.");
   }
 
-  // Auth
   const authHeader = request.headers.get("authorization");
   if (!authHeader || !authHeader.startsWith("Bearer ")) {
     return jsonError(401, "Missing or malformed Authorization header.");
   }
 
-  // Parse body
   let body: { messages?: Anthropic.MessageParam[] };
   try {
     body = await request.json();
@@ -786,7 +769,6 @@ export default async function handler(request: Request): Promise<Response> {
     return jsonError(400, "Request body must include a non-empty 'messages' array.");
   }
 
-  // Verify JWT
   let anonClient, serviceClient;
   try {
     anonClient = getAnonClient();
@@ -801,7 +783,6 @@ export default async function handler(request: Request): Promise<Response> {
     return jsonError(401, "Invalid or expired session.");
   }
 
-  // Run the agentic loop
   let result;
   try {
     result = await runAgenticLoop(serviceClient, body.messages);
@@ -810,7 +791,6 @@ export default async function handler(request: Request): Promise<Response> {
     return jsonError(502, "AI request failed: " + msg);
   }
 
-  // Extract structured contact IDs from the final text
   const { cleanText, contactIds } = extractContactIds(result.final_text);
 
   return new Response(

@@ -222,7 +222,9 @@ type UpsertContactInput = {
   id?: string;
   first_name: string;
   last_name: string;
+  pronouns: string | null;
   email: string | null;
+  secondary_email: string | null;
   phone: string | null;
   notes: string | null;
   standing: "active" | "inactive" | null;

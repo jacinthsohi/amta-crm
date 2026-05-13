@@ -24,6 +24,7 @@ type FormState = {
   last_name: string;
   pronouns: string;
   email: string;
+  secondary_email: string;
   phone: string;
   notes: string;
   standing: "active" | "inactive" | null;
@@ -35,6 +36,7 @@ const blank: FormState = {
   last_name: "",
   pronouns: "",
   email: "",
+  secondary_email: "",
   phone: "",
   notes: "",
   standing: null,
@@ -84,6 +86,7 @@ export function ContactForm({
         last_name: initialContact.last_name,
         pronouns: initialContact.pronouns ?? "",
         email: initialContact.email ?? "",
+        secondary_email: initialContact.secondary_email ?? "",
         phone: initialContact.phone ?? "",
         notes: initialContact.notes ?? "",
         standing: initialContact.standing,
@@ -122,6 +125,11 @@ export function ContactForm({
     if (!form.last_name.trim()) e.last_name = "Last name is required";
     if (form.email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email))
       e.email = "Doesn't look like a valid email";
+    if (
+      form.secondary_email &&
+      !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.secondary_email)
+    )
+      e.secondary_email = "Doesn't look like a valid email";
     setErrors(e);
     return Object.keys(e).length === 0;
   };
@@ -136,6 +144,7 @@ export function ContactForm({
         last_name: form.last_name.trim(),
         pronouns: form.pronouns.trim() || null,
         email: form.email.trim() || null,
+        secondary_email: form.secondary_email.trim() || null,
         phone: form.phone.trim() || null,
         notes: form.notes.trim() || null,
         standing: form.standing,
@@ -235,12 +244,26 @@ export function ContactForm({
         />
       </FieldGroup>
 
-      <FieldGroup label="Email" error={errors.email}>
+      <FieldGroup label="Primary email" error={errors.email}>
         <TextInput
           value={form.email}
           onChange={(v) => set("email", v)}
           placeholder="jane@example.org"
           error={errors.email}
+          type="email"
+        />
+      </FieldGroup>
+
+      <FieldGroup
+        label="Secondary email"
+        hint="Optional. A second email address (e.g. personal + work, or school + personal)."
+        error={errors.secondary_email}
+      >
+        <TextInput
+          value={form.secondary_email}
+          onChange={(v) => set("secondary_email", v)}
+          placeholder="jane.personal@example.org"
+          error={errors.secondary_email}
           type="email"
         />
       </FieldGroup>
