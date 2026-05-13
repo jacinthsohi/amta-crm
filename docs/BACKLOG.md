@@ -13,11 +13,34 @@ handoff docs.
 - 💭 DESIGN DISCUSSIONS — open product questions, no clear shape yet
 - ✅ SHIPPED — done, kept here for momentum / portfolio context
 
-Last updated: May 13, 2026 (morning — post is_test ship, pre dashboard build)
+Last updated: May 13, 2026 (post /data dashboard ship)
 
 ---
 
 ## ✅ Recently shipped
+
+- **📊 KPI / Data dashboard at `/data`** (May 13, 2026)
+  - Three metric cards: Active programs (with international count
+    subtitle), Active alumni, Current board members (using "Current
+    Board Member" category as v1 proxy).
+  - US state heatmap with Programs/Alumni toggle. Native title tooltip
+    on hover ("California: 23 programs"). Color scale from light pink
+    to brand maroon, sqrt-scaled for visual sensitivity at low counts.
+  - Alumni heatmap rolls each alum up via their program's state — Yale
+    alum counts as CT even if they live in CA. Future toggle for "by
+    current state" tracked in alumni form expansion item.
+  - All test contacts excluded from alumni count, board count, alumni
+    heatmap.
+  - Library: `react-simple-maps` with the public `us-atlas` topojson
+    source.
+  - Lives in `src/features/data/` (separate from `src/features/
+    dashboard/` which is the personal Home page).
+  - **Side fix:** `active_programs` view recreated to include the
+    `country` column. The May 12 geo migration added country to the
+    `programs` table, but Postgres views don't auto-update when
+    underlying tables change. This is exactly the kind of issue the
+    RLS-bypass-views fix (HIGH) will need to handle for every
+    `active_*` view.
 
 - **🧪 Test-data infrastructure via Test category** (May 13, 2026)
   - Reuses existing categories infrastructure rather than adding a column
@@ -30,34 +53,21 @@ Last updated: May 13, 2026 (morning — post is_test ship, pre dashboard build)
     `getTestContactIds()` async fetcher, `excludeTestContacts()` query
     wrapper, plus `shouldShowTestData()` / `setShowTestData()` for the
     localStorage toggle.
-  - Contacts list (`src/features/contacts/hooks.ts`) filters out test
-    contacts by default. Detail page deliberately does not filter — admin
-    navigated there intentionally and the Test category chip is the
-    visible signal.
-  - Admin UI on `/contacts`: muted "Show test data" checkbox below the
-    filter row. Persists via localStorage, no Settings page needed yet.
+  - Contacts list filters out test contacts by default; admin toggle on
+    `/contacts` to show them; persists via localStorage.
   - Ask AI server-side filter (`api/ask.ts`): test contacts always
     excluded from `search_contacts` and `get_committee_members` tools.
-    Cached per-request inside the agentic loop. Direct lookups
-    (`get_contact_details`) intentionally bypass the filter. The
-    server-side filter is UNCONDITIONAL — does NOT respect the
-    client-side toggle, since AI outputs are often shared/forwarded
-    externally and have higher leakage cost than admin UI views.
-  - Programs `is_test` deliberately punted (icebox). Only 1 test program
-    (Midlands State) means the +1 in stats is documented and acceptable.
-  - Real-data verified in prod: test contacts hidden in list and AI,
-    visible with toggle in UI, "Tell me about Mary Mocker" → Claude
-    correctly says she doesn't exist (filtered server-side regardless of
-    toggle), real-contact AI queries still work normally.
-  - Unblocks: KPI / Data dashboard.
+    Direct lookups (`get_contact_details`) intentionally bypass the
+    filter. Unconditional server-side (does NOT respect the
+    client-side toggle).
+  - Programs `is_test` deliberately punted (icebox). Only 1 test
+    program (Midlands State).
+  - Real-data verified in prod.
 
 - **Programs geographic data populated** (May 12, 2026)
-  - Added `country text NOT NULL DEFAULT 'USA'` column to `programs`
-  - Updated city, state, website, country for 483 of 484 programs from
-    a curated CSV dataset
-  - Breakdown: 479 USA / 4 Canada / 1 South Korea
-  - Test Program row skipped — to be cleaned up via Test category later
-  - Unblocks the US state heatmap on the upcoming `/data` dashboard
+  - Added `country text NOT NULL DEFAULT 'USA'` to `programs`
+  - 483 of 484 programs got city/state/website/country (curated CSV)
+  - 479 USA / 4 Canada / 1 South Korea
   - Migration: `migrations/20260512_programs_geo_data.sql`
 - **"Add judges" deep-link flow on Event detail page** (May 12, 2026)
 - **Contacts CSV import flow** (May 12, 2026)
@@ -73,22 +83,21 @@ Last updated: May 13, 2026 (morning — post is_test ship, pre dashboard build)
 ## 🔴 HIGH
 
 - **🔒 SECURITY: `active_*` views bypass RLS — cross-user data leak.**
-  Discovered May 12, 2026 investigating bug B1 ("can't delete Maggy
-  Randels conversation").
+  Discovered May 12, 2026 investigating bug B1.
   
   **Root cause:** Postgres views run with the *creator's* permissions by
-  default. `active_ai_conversations` (and almost certainly every other
-  `active_*` view) is owned by `postgres` (superuser), which bypasses
-  RLS on the underlying table. Authenticated users querying the view see
-  ALL rows, not just `auth_user_id = auth.uid()` rows.
-  
-  **Evidence:** RLS policies on `ai_conversations` correctly filter on
-  `auth_user_id = auth.uid()`. But admin user sees Maggy Randels'
-  conversation (separate auth user `32c79ee5-134f-49ba-ac67-38033f0bc94e`).
-  COUNT on the table = 2; sidebar shows 2 = admin is seeing everyone's
-  conversations. View owner = `postgres` (confirmed via pg_views).
+  default. `active_*` views are owned by `postgres` (superuser), which
+  bypasses RLS on the underlying table. Authenticated users querying
+  the view see ALL rows, not just `auth_user_id = auth.uid()` rows.
   
   **Scope:** Likely affects all `public.active_*` views.
+  
+  **Side note:** when we touch this, also need to make sure each view
+  exposes the current set of columns from the underlying table — the
+  May 13 `/data` build hit the `active_programs`-missing-`country`
+  variant of this problem and had to recreate the view inline. The
+  RLS audit should include a column-completeness pass for every view
+  while we're rebuilding them.
   
   **Not currently an incident:** Jacinth is the only real user. Becomes
   a real incident once a second user logs in.
@@ -96,10 +105,6 @@ Last updated: May 13, 2026 (morning — post is_test ship, pre dashboard build)
   **Fix:** Audit every `public.active_*` view; recreate with
   `WITH (security_invoker = on)`. Single migration. Test pass on every
   feature reading from active_* views.
-  
-  **Symptom artifact preserved:** Maggy's conversation
-  (`d953c4cb-e50f-490e-b2ee-89038eadf019`) NOT deleted. Visible reminder
-  until the proper fix lands.
 
 - **Email automation for invitations.** Currently copy/paste manual.
   Unblocks onboarding flow. Don't onboard new users until views RLS
@@ -118,23 +123,13 @@ Last updated: May 13, 2026 (morning — post is_test ship, pre dashboard build)
   2. Export always means "everything matching filter, ignoring
      pagination" *(current lean — cleanest mental model)*
   3. Hybrid: filter-matched default + "Clear filters and export all"
-  
-  **Scope:** 2-3 hours including pagination, less if just export.
 
 - **Add seasonal dimension to committee assignments + board membership.**
-  AMTA operates on July-June seasons. Add `season` column to
-  `committee_assignments`. UI: split Contact page into "Current
-  committees" / "Past committees." Half-day to full-day.
+  AMTA operates on July-June seasons. Add `season` column. UI: split
+  Contact page into "Current committees" / "Past committees."
 
 - **Constrain `event_staff.position` to a canonical dropdown.** Avoids
   free-text drift. See AMTA Rep design discussion.
-
-- **KPI / Data dashboard at `/data`.** Three metric cards: Active
-  programs, Active alumni, Active board members (using Current Board
-  Member category as proxy for v1). Two heatmaps with toggle: Programs
-  per state, Alumni per state (alumni heatmap rolls up via their
-  program's state — see callout below). Pre-work: geo data DONE,
-  `is_test` infrastructure DONE. **CURRENTLY BUILDING.**
 
 - **Populate `board_terms` table + flesh out board member breakdown.**
   Currently empty. Once populated, the Active Board Members card on
@@ -142,14 +137,12 @@ Last updated: May 13, 2026 (morning — post is_test ship, pre dashboard build)
   candidate breakdown that's more informative than a flat count.
 
 - **Admin data-cleanup / dupe-merge tool.** Heuristic dupe detection.
-  Side-by-side comparison. Merge transferring all associations. Full
-  session of focused work.
+  Side-by-side comparison. Merge transferring all associations.
 
-- **External judge signup flow.** Public form at `/judge-signup`, mirrors
-  `/alumni-signup` patterns. ~50% effort since infra exists.
+- **External judge signup flow.** Public form at `/judge-signup`,
+  mirrors `/alumni-signup` patterns. ~50% effort since infra exists.
 
 - **Mapping UX polish — show first-row preview next to each dropdown.**
-  Helps with idiosyncratic CSV headers.
 
 - **README update for CSV import.** "Workflow features" section with
   proper screenshots. ~30 min.
@@ -165,15 +158,23 @@ Last updated: May 13, 2026 (morning — post is_test ship, pre dashboard build)
   - **Current city / state** (newly captured May 13). Today, an alum's
     geo identity rolls up via their program's state — Yale alum = CT
     even if they live in California. For community-building, regional
-    events, and donor cultivation, the alum's *current* location matters
-    more than their college's location. Add a `current_state` (and
-    optionally `current_city`) column on `contacts`. Once populated,
-    the alumni heatmap on `/data` could optionally toggle between
-    "by program state" and "by current state" for a richer view.
+    events, and donor cultivation, the alum's *current* location
+    matters more than their college's location. Add a `current_state`
+    (and optionally `current_city`) column on `contacts`. Once
+    populated, the alumni heatmap on `/data` could optionally toggle
+    between "by program state" and "by current state" for a richer
+    view.
   - Roles within program (board member? captain? competitor?)
   - Current professional context (career field, job title)
   - Decision: required vs optional per field. Default to optional
     except start year.
+
+- **Click-through from `/data` heatmap to filtered list pages.** When
+  user clicks California on the Programs heatmap, navigate to
+  `/programs?state=California` (filtered list). Same for alumni
+  heatmap → `/contacts?state=California`. Pre-work: add state
+  filtering to `/programs` and `/contacts` list pages. Scope: one
+  session of focused work.
 
 - **Collapsible sidebar.** Toggle to collapse to icons-only.
 
@@ -186,8 +187,9 @@ Last updated: May 13, 2026 (morning — post is_test ship, pre dashboard build)
 
 - **CSV import for Programs.** Symmetric to existing export.
 
-- **Revamp Home page.** Focus on user workflow, not stats. Stats go to
-  `/data`.
+- **Revamp Home page.** Focus on user workflow, not stats. Stats now
+  live at `/data`. Home can lose the heavier metrics and focus on
+  what's-on-my-plate-today.
 
 - **Officer terms inline edit.** See bug B2.
 
@@ -206,6 +208,10 @@ Last updated: May 13, 2026 (morning — post is_test ship, pre dashboard build)
   because the feature is rarely used (portfolio piece). If usage grows,
   mirror the `loadTestContactIds()` + per-tool filter pattern from
   `api/ask.ts`. 20-30 min.
+
+- **Polish `/data` heatmap tooltip.** Native `<title>` works but is
+  slow to appear and unstyled. Replace with a custom React tooltip
+  for snappier UX. ~30 min.
 
 - **Standardize button heights across action rows.** PrimaryButton vs
   ExportCsvButton vs Import. 20-30 min focused.
@@ -227,42 +233,35 @@ Last updated: May 13, 2026 (morning — post is_test ship, pre dashboard build)
 - **B1:** ~~Can't delete Maggy Randels conversation~~ RESOLVED AS
   DIAGNOSIS — `active_*` views RLS bypass (now 🔴 HIGH).
 - **B2:** Officer terms can't be edited inline.
-- **B3:** Can't remove program affiliation from a Contact page. Two
-  layers (Contact page UI missing; Program page also broken/missing).
-- **B4:** Category multi-select dropdown perceived-slow on subsequent
-  selections.
+- **B3:** Can't remove program affiliation from a Contact page.
+- **B4:** Category multi-select dropdown perceived-slow.
 
 ---
 
 ## 💭 Design discussions
 
-- **AMTA Representative: category or role? (Or both, with a
-  relationship constraint?)** Four options laid out; lean is "category
-  + position with soft validation." Decision needed before position
-  dropdown work.
+- **AMTA Representative: category or role?** Four options laid out;
+  lean is "category + position with soft validation." Decision needed
+  before position dropdown work.
 
-- **📧 Secondary email on contacts: how do we model it?** Two converging
-  use cases: alumni (school + personal), workspace + personal in
-  general. Five open questions; lean is "start simple with one extra
-  column." Decision needed before expanding alumni signup form.
+- **📧 Secondary email on contacts: how do we model it?** Two
+  converging use cases. Five open questions; lean is "start simple
+  with one extra column." Decision needed before expanding alumni
+  signup form.
 
 - **📚 Institutional memory: communications archive vs. richer
   Interactions.** Reframed May 12 evening: AMTA uses Notion as
-  knowledge base, so playbooks live there. Some marketing-style alumni
-  emails may still warrant CRM logging for audience context. Lower
-  priority parking lot.
+  knowledge base. Lower priority parking lot.
 
 ---
 
 ## 🧊 ICEBOX
 
-- **`is_test` flag on programs.** Punted during May 13 is_test
-  infrastructure work. Only 1 test program (Midlands State); +1 in
-  stats is small known overhead. Revisit if test programs proliferate.
+- **`is_test` flag on programs.** Punted May 13. Only 1 test program;
+  +1 in stats is small known overhead.
 
-- **Allow emailless contacts (or a different entity for them).**
-  Surfaced May 12 from Claremont CSV import. Lean: option 3 (stay
-  strict; improve import surface).
+- **Allow emailless contacts.** Surfaced May 12 from Claremont CSV
+  import. Lean: stay strict; improve import surface.
 
 - **Recover alumni-claims-admin-mvp.md spec.** Low priority since
   feature is built.
@@ -280,6 +279,25 @@ Last updated: May 13, 2026 (morning — post is_test ship, pre dashboard build)
 
 ## 📋 To write up
 
+- **`/data` dashboard ship (May 13, 2026).** Two product threads
+  worth capturing: (1) The "one map or two" question — initial
+  instinct was stacked / side-by-side, picked toggle for vertical
+  real-estate reasons; (2) the honest framing of "alumni geo rolls up
+  via program state" being explicitly acknowledged as a v1 limitation
+  rather than papered over (and surfaced as a future toggle when
+  contacts.current_state is populated); (3) the engineering lesson of
+  using a feature flag on which view fits each entity vs. mass
+  abstraction. Also a great visual portfolio piece.
+
+- **The active_programs-missing-country bug (May 13).** Mid-build, the
+  dashboard 400'd because the view was created before the country
+  column was added. Postgres views don't auto-update their column
+  lists. Recreated the view inline. Concrete instance of the bigger
+  RLS-bypass-views issue. Lessons: views and their underlying tables
+  drift; "active_*" pattern needs auditing for both security and
+  column completeness; the column-recreate question makes the RLS
+  fix bigger but also more valuable.
+
 - **`is_test` as a product-design exercise (May 13).** Three pushbacks
   reshaped scope: category vs column for contacts, programs punted,
   server-vs-client filtering policy. Lessons: "use what fits each
@@ -287,18 +305,20 @@ Last updated: May 13, 2026 (morning — post is_test ship, pre dashboard build)
   genuinely different.
 
 - **RLS debugging bug story (May 12 morning).** The 403 on
-  `/alumni-signup`. Lessons: confirm test setup before trusting
-  results; RLS scoped per role.
+  `/alumni-signup`.
 
 - **Postgres views bypassing RLS bug story (May 12 evening).** Started
-  as "delete button doesn't work." View owner = `postgres` bypasses
-  RLS by default. Lessons: when RLS LOOKS correct but data leaks,
-  check the views.
+  as "delete button doesn't work."
 
 - **CSV import StrictMode bug story (May 12).** React 18 StrictMode
-  double-mount + cleanup flag race. Lessons: for single-shot async,
-  refs > flags.
+  double-mount + cleanup flag race.
 
-- **CSV import as product-design exercise (May 12).** Dupe story,
-  position default, entry-point UX, row cap, tournament-host CSV
-  alias system. Each decision pushed back on over-build.
+- **CSV import as product-design exercise (May 12).**
+
+- **The DashboardPage collision (May 13).** Brief but instructive
+  moment: I assumed `src/features/dashboard/` was empty and wrote
+  `DashboardPage.tsx` into it, blowing away the existing Home page.
+  Recovered via git checkout, renamed to `src/features/data/DataPage.tsx`.
+  Lessons: when introducing a new feature folder, check it isn't
+  occupied; semantic names ("Dashboard" vs "Data") get reused across
+  pages and need disambiguation; git is your friend.
