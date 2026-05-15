@@ -3,6 +3,7 @@ import { Link } from "react-router-dom";
 import { supabase } from "@/lib/supabase";
 import { useAuth } from "@/lib/auth";
 import type { Program } from "@/lib/database.types";
+import { STATE_OPTIONS_FOR_DROPDOWN } from "@/lib/us-states";
 
 /**
  * Public alumni signup form (no auth required).
@@ -24,6 +25,12 @@ import type { Program } from "@/lib/database.types";
  * encouraging admins to use this form when they should be using /contacts),
  * we detect auth here and show a redirect message with an option to sign out
  * and continue if they really do want to submit the form for someone else.
+ *
+ * Data quality rules specific to THIS form (not enforced on admin
+ * ContactForm or CSV import — admins have judgment):
+ *   - Primary email cannot end in `.edu`. School emails get deactivated
+ *     after graduation, so they make poor primary contacts for records
+ *     meant to survive long-term. Secondary email is exempt.
  */
 export default function AlumniSignupPage() {
   const { session, signOut } = useAuth();
@@ -40,6 +47,8 @@ export default function AlumniSignupPage() {
   const [graduationYear, setGraduationYear] = useState("");
   const [programId, setProgramId] = useState("");
   const [phone, setPhone] = useState("");
+  const [currentCity, setCurrentCity] = useState("");
+  const [currentState, setCurrentState] = useState("");
   const [notes, setNotes] = useState("");
   // Honeypot field (see comment above; not rendered as a real input)
   const [website, setWebsite] = useState("");
@@ -134,6 +143,10 @@ export default function AlumniSignupPage() {
     if (!email.trim()) return "Email is required.";
     if (!/^\S+@\S+\.\S+$/.test(email.trim()))
       return "Please enter a valid email address.";
+    // .edu blocking on PRIMARY email only. Secondary is exempt — that's the
+    // whole reason secondary exists. Case-insensitive match on the suffix.
+    if (/\.edu$/i.test(email.trim()))
+      return "Please use a personal email here — school emails get deactivated after graduation. You can add your school email as a secondary address below.";
     if (
       secondaryEmail.trim() &&
       !/^\S+@\S+\.\S+$/.test(secondaryEmail.trim())
@@ -174,6 +187,8 @@ export default function AlumniSignupPage() {
         graduation_year: Number(graduationYear),
         program_id: programId,
         phone: phone.trim() || null,
+        current_city: currentCity.trim() || null,
+        current_state: currentState || null,
         notes: notes.trim() || null,
         status: "pending",
       });
@@ -287,7 +302,11 @@ export default function AlumniSignupPage() {
               </FormField>
             </div>
 
-            <FormField label="Email" required>
+            <FormField
+              label="Email"
+              required
+              hint="Please use a personal email — school emails (.edu) get deactivated after graduation."
+            >
               <input
                 type="email"
                 value={email}
@@ -300,7 +319,7 @@ export default function AlumniSignupPage() {
 
             <FormField
               label="Secondary email (optional)"
-              hint="If you have a personal email in addition to a school email (or vice versa), we'll keep both on file. We may use either to reach you."
+              hint="If you'd like us to keep your school email (or any other secondary address) on file, add it here. We may use either to reach you."
             >
               <input
                 type="email"
@@ -360,6 +379,39 @@ export default function AlumniSignupPage() {
                 autoComplete="tel"
               />
             </FormField>
+
+            {/*
+              Current location — both optional. Helps us with regional
+              alumni meetups and donor cultivation independent of program
+              location. International alumni can pick "International" in
+              the state dropdown.
+            */}
+            <div className="grid grid-cols-2 gap-3">
+              <FormField label="Current city (optional)">
+                <input
+                  type="text"
+                  value={currentCity}
+                  onChange={(e) => setCurrentCity(e.target.value)}
+                  className="form-input"
+                  autoComplete="address-level2"
+                  placeholder="Brooklyn"
+                />
+              </FormField>
+              <FormField label="Current state (optional)">
+                <select
+                  value={currentState}
+                  onChange={(e) => setCurrentState(e.target.value)}
+                  className="form-input"
+                >
+                  <option value="">Select…</option>
+                  {STATE_OPTIONS_FOR_DROPDOWN.map((s) => (
+                    <option key={s} value={s}>
+                      {s}
+                    </option>
+                  ))}
+                </select>
+              </FormField>
+            </div>
 
             <FormField label="Anything else we should know? (optional)">
               <textarea

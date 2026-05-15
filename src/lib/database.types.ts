@@ -99,6 +99,8 @@ export type Database = {
         Row: {
           contact_id: string | null
           created_at: string
+          current_city: string | null
+          current_state: string | null
           email: string
           first_name: string
           graduation_year: number
@@ -110,12 +112,15 @@ export type Database = {
           review_notes: string | null
           reviewed_at: string | null
           reviewed_by: string | null
+          secondary_email: string | null
           status: string
           updated_at: string
         }
         Insert: {
           contact_id?: string | null
           created_at?: string
+          current_city?: string | null
+          current_state?: string | null
           email: string
           first_name: string
           graduation_year: number
@@ -127,12 +132,15 @@ export type Database = {
           review_notes?: string | null
           reviewed_at?: string | null
           reviewed_by?: string | null
+          secondary_email?: string | null
           status?: string
           updated_at?: string
         }
         Update: {
           contact_id?: string | null
           created_at?: string
+          current_city?: string | null
+          current_state?: string | null
           email?: string
           first_name?: string
           graduation_year?: number
@@ -144,6 +152,7 @@ export type Database = {
           review_notes?: string | null
           reviewed_at?: string | null
           reviewed_by?: string | null
+          secondary_email?: string | null
           status?: string
           updated_at?: string
         }
@@ -451,6 +460,8 @@ export type Database = {
           ai_summary_generated_at: string | null
           auth_user_id: string | null
           created_at: string
+          current_city: string | null
+          current_state: string | null
           deleted_at: string | null
           email: string | null
           first_name: string
@@ -471,6 +482,8 @@ export type Database = {
           ai_summary_generated_at?: string | null
           auth_user_id?: string | null
           created_at?: string
+          current_city?: string | null
+          current_state?: string | null
           deleted_at?: string | null
           email?: string | null
           first_name: string
@@ -491,6 +504,8 @@ export type Database = {
           ai_summary_generated_at?: string | null
           auth_user_id?: string | null
           created_at?: string
+          current_city?: string | null
+          current_state?: string | null
           deleted_at?: string | null
           email?: string | null
           first_name?: string
@@ -1802,6 +1817,8 @@ export type Database = {
           ai_summary_generated_at: string | null
           auth_user_id: string | null
           created_at: string | null
+          current_city: string | null
+          current_state: string | null
           deleted_at: string | null
           email: string | null
           first_name: string | null
@@ -1822,6 +1839,8 @@ export type Database = {
           ai_summary_generated_at?: string | null
           auth_user_id?: string | null
           created_at?: string | null
+          current_city?: string | null
+          current_state?: string | null
           deleted_at?: string | null
           email?: string | null
           first_name?: string | null
@@ -1842,6 +1861,8 @@ export type Database = {
           ai_summary_generated_at?: string | null
           auth_user_id?: string | null
           created_at?: string | null
+          current_city?: string | null
+          current_state?: string | null
           deleted_at?: string | null
           email?: string | null
           first_name?: string | null
