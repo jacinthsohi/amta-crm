@@ -394,7 +394,7 @@ export default function AlumniSignupPage() {
                   onChange={(e) => setCurrentCity(e.target.value)}
                   className="form-input"
                   autoComplete="address-level2"
-                  placeholder="Brooklyn"
+                  placeholder="Midlands"
                 />
               </FormField>
               <FormField label="Current state (optional)">

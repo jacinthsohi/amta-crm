@@ -5,6 +5,7 @@ import {
   ChevronRight,
   Mail,
   Phone,
+  MapPin,
   Award,
   GraduationCap,
   Briefcase,
@@ -45,6 +46,34 @@ import { MeetingBrief } from "./MeetingBrief";
 
 function isCurrentBoard(c: { category_names: string[] }): boolean {
   return c.category_names.includes("Current Board Member");
+}
+
+/**
+ * Format the contact's current location for display.
+ * Rules:
+ *   - both city + state (and state is a real US state): "Brooklyn, New York"
+ *   - only city: "Brooklyn"
+ *   - only state (real US state): "New York"
+ *   - state is "International" or "Other" with no city: skip
+ *     (not useful information on its own — those values exist only to let
+ *     non-US alumni complete the form without lying about state)
+ *   - state is "International" or "Other" WITH a city: show just the city
+ *     ("Brooklyn, International" reads weirdly)
+ *   - neither: returns null, caller doesn't render the row
+ */
+function formatLocation(
+  city: string | null,
+  state: string | null,
+): string | null {
+  const c = city?.trim() || null;
+  const s = state?.trim() || null;
+
+  const isGenericState = s === "International" || s === "Other";
+
+  if (c && s && !isGenericState) return `${c}, ${s}`;
+  if (c) return c;
+  if (s && !isGenericState) return s;
+  return null;
 }
 
 export default function ContactDetailPage() {
@@ -203,6 +232,8 @@ function Hero({
   contact: ContactDetailType;
   onEdit: () => void;
 }) {
+  const locationLabel = formatLocation(c.current_city, c.current_state);
+
   return (
     <div className="px-8 pt-8 pb-6 border-b border-zinc-200">
       <div className="flex items-start gap-5">
@@ -221,7 +252,7 @@ function Hero({
             )}
             {c.standing === "inactive" && <Tag tone="muted">Inactive</Tag>}
           </div>
-          <div className="flex items-center gap-5 text-sm text-zinc-600 mb-3 flex-wrap">
+          <div className="flex items-center gap-5 text-sm text-zinc-600 mb-1.5 flex-wrap">
             {c.email && (
               <div className="flex items-center gap-1.5" title="Primary email">
                 <Mail size={13} className="text-zinc-400" />
@@ -244,6 +275,15 @@ function Hero({
               </div>
             )}
           </div>
+          {locationLabel && (
+            <div
+              className="flex items-center gap-1.5 text-sm text-zinc-600 mb-3"
+              title="Current location"
+            >
+              <MapPin size={13} className="text-zinc-400" />
+              <span>{locationLabel}</span>
+            </div>
+          )}
           <div className="flex flex-wrap gap-1.5">
             {c.category_names.map((cat) => (
               <Tag

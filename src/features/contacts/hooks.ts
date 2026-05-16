@@ -226,6 +226,8 @@ type UpsertContactInput = {
   email: string | null;
   secondary_email: string | null;
   phone: string | null;
+  current_city: string | null;
+  current_state: string | null;
   notes: string | null;
   standing: "active" | "inactive" | null;
   category_names: string[];

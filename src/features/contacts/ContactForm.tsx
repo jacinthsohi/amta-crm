@@ -17,6 +17,7 @@ import {
   type ContactDetail,
 } from "./hooks";
 import { formatError } from "@/lib/errors";
+import { STATE_OPTIONS_FOR_DROPDOWN } from "@/lib/us-states";
 
 import { RichTextEditor } from "@/components/RichTextEditor";
 type FormState = {
@@ -26,6 +27,8 @@ type FormState = {
   email: string;
   secondary_email: string;
   phone: string;
+  current_city: string;
+  current_state: string;
   notes: string;
   standing: "active" | "inactive" | null;
   category_names: string[];
@@ -38,6 +41,8 @@ const blank: FormState = {
   email: "",
   secondary_email: "",
   phone: "",
+  current_city: "",
+  current_state: "",
   notes: "",
   standing: null,
   category_names: [],
@@ -54,6 +59,10 @@ const blank: FormState = {
  * so the user can immediately start adding board terms, etc.
  *
  * Soft-delete is offered in edit mode via the footer's red "Delete" button.
+ *
+ * Note: unlike /alumni-signup, this form does NOT block .edu emails on the
+ * primary field. Admins have judgment and may have legitimate reasons to
+ * record a school email as primary (e.g. current students, faculty).
  */
 export function ContactForm({
   open,
@@ -88,6 +97,8 @@ export function ContactForm({
         email: initialContact.email ?? "",
         secondary_email: initialContact.secondary_email ?? "",
         phone: initialContact.phone ?? "",
+        current_city: initialContact.current_city ?? "",
+        current_state: initialContact.current_state ?? "",
         notes: initialContact.notes ?? "",
         standing: initialContact.standing,
         category_names: [...initialContact.category_names],
@@ -146,6 +157,8 @@ export function ContactForm({
         email: form.email.trim() || null,
         secondary_email: form.secondary_email.trim() || null,
         phone: form.phone.trim() || null,
+        current_city: form.current_city.trim() || null,
+        current_state: form.current_state || null,
         notes: form.notes.trim() || null,
         standing: form.standing,
         category_names: form.category_names,
@@ -275,6 +288,35 @@ export function ContactForm({
           placeholder="(555) 123-4567"
         />
       </FieldGroup>
+
+      {/*
+        Current location — both optional. Captured to support regional
+        alumni events, donor cultivation, and other location-aware
+        outreach. Distinct from the contact's program/school location.
+      */}
+      <div className="grid grid-cols-2 gap-3">
+        <FieldGroup label="Current city">
+          <TextInput
+            value={form.current_city}
+            onChange={(v) => set("current_city", v)}
+            placeholder="Midlands"
+          />
+        </FieldGroup>
+        <FieldGroup label="Current state">
+          <select
+            value={form.current_state}
+            onChange={(e) => set("current_state", e.target.value)}
+            className="w-full text-sm px-2.5 py-1.5 rounded-md border border-zinc-200 bg-white focus:outline-none focus:border-maroon-700 focus:ring-2 focus:ring-maroon-700/10 transition-colors"
+          >
+            <option value="">Select…</option>
+            {STATE_OPTIONS_FOR_DROPDOWN.map((s) => (
+              <option key={s} value={s}>
+                {s}
+              </option>
+            ))}
+          </select>
+        </FieldGroup>
+      </div>
 
       <FieldGroup
         label="Categories"
