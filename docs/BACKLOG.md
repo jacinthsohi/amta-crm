@@ -13,71 +13,42 @@ handoff docs.
 - 💭 DESIGN DISCUSSIONS — open product questions, no clear shape yet
 - ✅ SHIPPED — done, kept here for momentum / portfolio context
 
-Last updated: May 13, 2026 (end of day — six ships)
+Last updated: May 16, 2026 — Tier 1 RLS audit shipped, active leak closed
 
 ---
 
 ## ✅ Recently shipped
 
+- **🔒 SECURITY: Closed RLS bypass on AI views (Tier 1 of audit)**
+  (May 16, 2026)
+  - Postgres views default to running with the creator's permissions
+    (postgres = superuser), bypassing RLS on the underlying tables.
+    All ~23 active_* views had this issue. Tier 1 fixes the highest-
+    risk: AI conversation views, which were actively leaking cross-
+    user data.
+  - Recreated `active_ai_conversations` and `active_ai_messages` with
+    `WITH (security_invoker = true)`. Views now respect the existing
+    (correctly user-scoped) RLS policies on `ai_conversations` and
+    `ai_messages`.
+  - **Bug confirmed as REAL active leak, not theoretical.** Post-
+    migration verification: a conversation referencing Maggy Randels
+    that was visible in jacinth's sidebar disappeared. Its
+    auth_user_id was not jacinth's — meaning before the fix, jacinth
+    was seeing another user's conversation. Resolves bug B1 as the
+    visible symptom of the underlying view-RLS-bypass.
+  - Migration captured: `20260516_ai_views_security_invoker.sql`
+    (with matching rollback file in repo).
+  - Tier 2/3 (the other ~19 views) deferred to future sessions —
+    most are admin-only or low-risk for current state.
+
+- **🎓 Alumni signup: block .edu primary + capture current city/state**
+  (May 15, 2026)
 - **📧 Secondary email field across the CRM** (May 13, 2026)
-  - One column on `contacts` (and matching column on `alumni_claims`),
-    not a related `contact_emails` table. Two emails covers vast
-    majority of cases.
-  - Generic primary/secondary labeling — no type field, user picks which
-    is primary. Scales to work/personal, school/personal, etc.
-  - `secondary_email` NOT unique-constrained. Secondary is supplementary;
-    primary remains canonical. Avoids weird "I can't add Mary's
-    personal because Bob has it as his primary" states.
-  - Dupe detection across both columns in CSV import. Same person
-    reached via different channels = still the same person.
-  - Ask AI: new `email_query` input on `search_contacts` searches BOTH
-    columns via PostgREST `.or()`. Whether user gives Claude the work
-    email or personal email, it finds the contact.
-  - UI:
-    - `ContactForm` has primary email + secondary email fields with
-      email-format validation on both.
-    - `ContactDetailPage` shows secondary email below primary in Hero,
-      visually subordinate (smaller icon, dimmer text), tooltips
-      clarify which is which.
-    - `/alumni-signup` has a "Secondary email (optional)" field with
-      hint text. Reviewing admin sees both when approving.
-  - Migrations: `20260513_secondary_email.sql` (contacts + view
-    recreate), `20260513_alumni_claims_secondary_email.sql` (no view
-    needed for alumni_claims).
-  - Side note: This was the 2nd-3rd instance of the active_* view
-    column-drift problem in one day. RLS audit became actually
-    necessary, not just theoretical.
-
 - **🔘 Action-row buttons use SecondaryButton component** (May 13, 2026)
-  - Inline Import button and ExportCsvButton trigger replaced with the
-    existing `<SecondaryButton>` component. Heights and weights now
-    consistent across action rows.
-
 - **🪟 Collapsible sidebar** (May 13, 2026)
-  - 232px expanded / 56px collapsed (icons only) with smooth 150ms
-    transition. State persists in localStorage. Tooltips on every icon.
-    Search becomes icon button when collapsed. Admin pending-claims
-    pill becomes a maroon dot.
-
 - **🎨 /data heatmap custom tooltip + hover polish** (May 13, 2026)
-  - Custom React tooltip follows cursor with brand styling. Hover
-    darkens state stroke to brand maroon. Pointer cursor signals
-    interactivity. Singular/plural noun handling.
-
 - **📊 KPI / Data dashboard at `/data`** (May 13, 2026)
-  - Three metric cards: Active programs, Active alumni, Current board
-    members. US state heatmap with Programs/Alumni toggle. Alumni
-    rolls up via program's state. Test contacts excluded everywhere.
-  - Side fix: `active_programs` view recreated to expose `country`
-    (column was added to base table on May 12 but view didn't auto-
-    update — same pattern that bit us multiple times today).
-
 - **🧪 Test-data infrastructure via Test category** (May 13, 2026)
-  - Reuses existing categories infrastructure. Shared helper at
-    `src/lib/test-data.ts`. Contacts list filters by default with
-    admin toggle. Ask AI server-side filter (unconditional, no toggle
-    respect). Direct lookups intentionally bypass.
-
 - **Programs geographic data populated** (May 12, 2026)
 - **"Add judges" deep-link flow on Event detail page** (May 12, 2026)
 - **Contacts CSV import flow** (May 12, 2026)
@@ -92,122 +63,114 @@ Last updated: May 13, 2026 (end of day — six ships)
 
 ## 🔴 HIGH
 
-- **🔒 SECURITY: `active_*` views bypass RLS — cross-user data leak.**
-  Discovered May 12, 2026 investigating bug B1. Three instances of the
-  related column-drift problem hit on May 13 alone.
+- **🔒 SECURITY: RLS audit Tier 2/3 — close bypass on remaining ~19
+  active_* views.** Tier 1 (AI views) shipped May 16. Tier 2/3 covers
+  views over data with admin-only RLS, plus lower-risk operational
+  data. Each view needs:
+  - Full column list verified against base table via pg_get_viewdef
+    or information_schema (NEVER from memory — lessons from May 13)
+  - DROP + CREATE with `WITH (security_invoker = true)`
+  - Smoke test of any feature querying it
   
-  **Root cause:** Postgres views run with the *creator's* permissions by
-  default. `active_*` views are owned by `postgres` (superuser), which
-  bypasses RLS on the underlying table. Authenticated users querying
-  the view see ALL rows, not just `auth_user_id = auth.uid()` rows.
+  **Inventory** (all currently owned by postgres, all bypass RLS):
+  - active_board_terms
+  - active_committee_assignments
+  - active_committees
+  - active_contact_categories
+  - active_contact_category_assignments
+  - active_contacts (touched 2x this week — column drift footgun)
+  - active_event_documents
+  - active_event_hosts
+  - active_event_staff
+  - active_events
+  - active_interaction_links
+  - active_interaction_participants
+  - active_interactions
+  - active_officer_terms
+  - active_program_affiliations
+  - active_programs (touched 1x this week — column drift footgun)
+  - active_project_assignments
+  - active_projects
+  - active_tasks
   
-  **Scope:** Likely affects all `public.active_*` views.
+  **Out of scope (separate design problem — see Design Discussions):**
+  - active_invitations + active_invitations_view
   
-  **Compounding problem:** Postgres views don't auto-update their
-  column lists when the underlying table changes. Three instances of
-  this hit on May 13 alone:
-  1. `active_programs` missing `country` (added to base May 12)
-  2. `active_contacts` missing `secondary_email` (added today)
-  3. `active_contacts` accidentally missing `profile_photo_url` and
-     `is_admin` during recovery from a botched view recreate
+  Suggested batching:
+  - Batch A (low-risk, simple): active_contact_categories,
+    active_contact_category_assignments, active_committees,
+    active_programs, active_events, active_event_documents,
+    active_event_hosts, active_event_staff (mostly lookup/admin)
+  - Batch B (contact data): active_contacts, active_board_terms,
+    active_officer_terms, active_committee_assignments,
+    active_program_affiliations
+  - Batch C (workflow data): active_tasks, active_interactions,
+    active_interaction_links, active_interaction_participants,
+    active_projects, active_project_assignments
   
-  Each instance is its own manual fix. Some are caught fast (`/data`
-  returning 400 on launch), some lurk (sidebar admin section silently
-  hidden because `is_admin` not in view). The RLS audit needs to be a
-  column-completeness audit too.
-  
-  **Not currently an incident:** Jacinth is the only real user. Becomes
-  a real incident once a second user logs in.
-  
-  **Fix:** Audit every `public.active_*` view; recreate with
-  `WITH (security_invoker = on)` AND a full column list from the
-  underlying table. Single migration. Test pass on every feature
-  reading from active_* views.
-  
-  **NEXT UP (May 14 priority).**
+  Estimated 1-2 hours per batch including smoke testing. Three
+  focused sessions total. Order: A → B → C (lowest risk first).
 
 - **Email automation for invitations.** Currently copy/paste manual.
-  Unblocks onboarding flow. Don't onboard new users until views RLS
-  bypass is fixed.
+  Unblocked by Tier 1 ship. Still recommended to complete Tier 2
+  before onboarding additional users.
 
 ---
 
 ## 🟡 MEDIUM
 
-- **🧾 Export "all" vs "current view" + upcoming pagination for
-  Contacts.** Three options laid out; current lean = "export always
-  means everything matching filter, ignoring pagination."
+- **🧾 Export "all" vs "current view" + Contacts pagination.**
 
 - **Add seasonal dimension to committee assignments + board membership.**
-  AMTA operates on July-June seasons. Add `season` column. UI: split
-  Contact page into "Current committees" / "Past committees." See
-  Design Discussions for the open scope question.
+  See Seasons design discussion.
 
-- **Constrain `event_staff.position` to a canonical dropdown.** Avoids
-  free-text drift. See AMTA Rep design discussion.
+- **Constrain `event_staff.position` to a canonical dropdown.**
 
 - **Populate `board_terms` table + flesh out board member breakdown.**
-  Currently empty. Once populated, the Active Board Members card on
-  `/data` can show director / first-year / second-year breakdown.
 
-- **Admin data-cleanup / dupe-merge tool.** Heuristic dupe detection.
-  Side-by-side comparison. Now needs to handle dedup across primary
-  AND secondary email (added today as a follow-on consideration).
+- **Admin data-cleanup / dupe-merge tool.** Now needs to dedup across
+  primary AND secondary email.
 
-- **External judge signup flow.** Public form at `/judge-signup`,
-  mirrors `/alumni-signup` patterns. Now also gets secondary email
-  capture for free.
+- **Bring location to admin ContactForm.** Part 2 of the alumni-form
+  location work. Add `current_city` + `current_state` editing to the
+  admin ContactForm so admins can update existing contacts. Without
+  this, location data only enters via new alumni signups and goes
+  stale forever. ~20 min.
+
+- **External judge signup flow.**
 
 - **Mapping UX polish — show first-row preview next to each dropdown.**
 
-- **README update for CSV import.** "Workflow features" section with
-  proper screenshots. ~30 min.
+- **README update for CSV import.** ~30 min.
 
 - **Tighten `alumni_claims` RLS to admin-only.**
 
-- **Combobox UX for the program dropdown on `/alumni-signup`.** 483
-  options in a native `<select>` is bad UX.
+- **Combobox UX for the program dropdown on `/alumni-signup`.**
 
-- **Expand alumni signup form fields.** Specific candidates:
-  - **Pronouns** (already captured)
-  - **Start year** (also fixes the `start_year = end_year` tech debt)
-  - **Current city / state** (newly captured May 13). Today, an alum's
-    geo identity rolls up via their program's state — Yale alum = CT
-    even if they live in California. Add `current_state` (and
-    optionally `current_city`) column on `contacts`. Once populated,
-    the alumni heatmap on `/data` could toggle between "by program
-    state" and "by current state" for a richer view.
+- **Expand alumni signup form fields (remaining candidates).** After
+  location + .edu shipped May 15, remaining alumni form expansion:
+  - Pronouns
+  - Start year (also fixes the `start_year = end_year` tech debt)
   - Roles within program (board member? captain? competitor?)
   - Current professional context (career field, job title)
-  - ~~Secondary email~~ SHIPPED May 13 as standalone feature.
 
-- **CSV import for Contacts: handle secondary_email column.** The
-  alumni signup form captures secondary email but the CSV import
-  pipeline doesn't currently expose secondary_email as a mappable
-  column. When importing alumni rosters that include both school and
-  personal emails, the import would currently drop secondary. Add it
-  to the field mapper UI and import logic. ~30 min.
+- **CSV import for Contacts: handle secondary_email column.** ~30 min.
 
-- **CSV export for Contacts: include secondary_email column.** Same
-  feature parity — secondary should be exportable since it's
-  importable and exists on the record. ~10 min.
+- **CSV export for Contacts: include secondary_email column.** ~10 min.
 
-- **Click-through from `/data` heatmap to filtered list pages.** Map
-  signals interactivity (cursor pointer + hover stroke); only the
-  navigation wiring is missing. Pre-work: add state filtering to
-  `/programs` and `/contacts` list pages.
+- **CSV import/export: handle current_city and current_state.** ~20 min.
+
+- **Click-through from `/data` heatmap to filtered list pages.**
 
 - **Self-service profile editing for alumni (Phase 3).**
 
-- **Sortable lists across Contacts / Programs / Events.** Shared
-  `<SortableTable>`.
+- **Sortable lists across Contacts / Programs / Events.**
 
 - **Profile / Settings page** separate from Contact record.
 
-- **CSV import for Programs.** Symmetric to existing export.
+- **CSV import for Programs.**
 
-- **Revamp Home page.** Focus on user workflow, not stats. Stats now
-  live at `/data`.
+- **Revamp Home page.**
 
 - **Officer terms inline edit.** See bug B2.
 
@@ -221,176 +184,180 @@ Last updated: May 13, 2026 (end of day — six ships)
 
 ## 🟢 LOW
 
-- **`api/meeting-brief.ts` test-data filter follow-up.** Rarely used
-  portfolio piece; mirror the pattern from `api/ask.ts` if usage grows.
+- **Consolidate database types files.** `database.generated.ts`
+  (May 11) is stale — predates the secondary_email and current_city/
+  current_state additions. `alumni-claims-hooks.ts` is the one
+  importer. Swap that import to `database.types.ts`, delete the old
+  file. ~5 min cleanup, discovered during May 16 RLS audit.
 
+- **Rollback migration naming convention.** Current pattern of
+  `20260516_ai_views_security_invoker.sql` +
+  `20260516_ai_views_security_invoker_rollback.sql` puts forward and
+  rollback files side-by-side alphabetically. Minor footgun — easy
+  to grab the wrong one when copy-pasting into Supabase. Consider
+  `migrations/rollback/` subdirectory or `_rollback_` prefix.
+  Discovered May 16 when forward migration didn't run because
+  rollback was pasted first.
+
+- **`api/meeting-brief.ts` test-data filter follow-up.**
 - **`api/meeting-brief.ts` and `api/contact-summary.ts` secondary
-  email visibility.** As of May 13, only `api/ask.ts` returns the
-  secondary email column. If meeting-brief or contact-summary surface
-  contact info in their AI output, they should also expose secondary
-  for completeness. Small change, mirror what ask.ts does.
-
-- **`/data` heatmap tooltip viewport-edge flipping.** Tooltip can spill
-  off-screen near right/bottom edges. ~15 min.
-
+  email visibility.**
+- **`/data` heatmap tooltip viewport-edge flipping.**
 - **Add email consent disclosure to `/alumni-signup`.**
-
 - **Find Chrome extension slowing Supabase calls locally.** Dev only.
-
 - **Refresh contact-relationships screenshot in README.**
-
 - **Clean up 308 latent TS errors incrementally.**
-
 - **Add `npm run build` step to pre-push workflow.**
 
 ---
 
 ## 🐛 BUGS
 
-- **B1:** ~~Can't delete Maggy Randels conversation~~ RESOLVED AS
-  DIAGNOSIS — `active_*` views RLS bypass (now 🔴 HIGH).
+- **B1:** ~~Can't delete Maggy Randels conversation~~ **RESOLVED
+  May 16, 2026.** The conversation wasn't jacinth's — RLS bypass on
+  views was leaking it from another auth user. Tier 1 RLS fix
+  removed it from view. Underlying cause = the same bug we've been
+  patching around all week.
 - **B2:** Officer terms can't be edited inline.
 - **B3:** Can't remove program affiliation from a Contact page.
 - **B4:** Category multi-select dropdown perceived-slow.
 - **B5:** Pre-existing auth users don't auto-resolve their pending
-  invitations. Jacinth is mid-diagnostic (sending Warihay the invite
-  link to see if the flow resolves it).
+  invitations.
+- **B6:** Ask AI occasionally 504s on the first message of complex
+  queries. Discovered May 16 during RLS smoke testing. Likely
+  Vercel edge function timeout when agentic loop runs many tool
+  calls. Simple queries ("Testing") return fine. Investigation
+  needed: log how long /api/ask actually takes, consider raising
+  timeout or shortening the agentic loop.
 
 ---
 
 ## 💭 Design discussions
 
+- **🎫 Invitations: how do non-authed users read their own invitation
+  by token?** Surfaced during May 16 RLS audit. Current state:
+  - `active_invitations` and `active_invitations_view` both bypass
+    RLS (along with all other active_* views).
+  - RLS policies on `invitations` table are ADMIN-ONLY (select,
+    update, insert all require `is_current_user_admin()`).
+  - But the magic-link flow (`AcceptInvitationPage`,
+    `FinishInvitationPage`) needs non-authed/non-admin users to
+    fetch an invitation row by token.
+  - Today: works because views bypass RLS.
+  - After hypothetical security_invoker fix: would break — non-admin
+    users would fail the policy check.
+  
+  Three real options:
+  1. **RPC with SECURITY DEFINER:** Drop the public views, add a
+     SECURITY DEFINER function `get_invitation_by_token(token)` that
+     returns the row. Public flow calls the function; admins still
+     use the view. Most secure but most refactor.
+  2. **Permissive SELECT policy:** Allow public SELECT on invitations.
+     Risk: someone with a leaked token list could read those rows.
+     Mitigated because tokens are presumably long random strings.
+  3. **Dedicated public endpoint:** Add `/api/get-invitation?token=`
+     edge function that does the lookup server-side with service
+     role and returns sanitized data. Cleanest separation of public
+     vs admin surface.
+  
+  **Pre-work:** decide what's the right model. Likely option 1 or 3.
+  Decision should consider whether we'll have other "public read by
+  token" patterns (alumni claims approval? event invites?) — if yes,
+  a generic RPC pattern is worth investing in.
+  
+  **Blocks:** the Tier 1 RLS audit from being fully complete. The
+  invitations views are the only Tier 1 views not yet fixed.
+
 - **AMTA Representative: category or role?** Four options; lean is
-  "category + position with soft validation." Decision needed before
-  position dropdown work.
+  "category + position with soft validation."
 
-- **📅 Seasons concept: how do we model July-June years?** Captured
-  May 13. Today's data has no notion of "this committee no longer
-  exists" or "this person served in 2023-24 vs 2024-25." Real
-  question whether seasons are:
-  
-  1. **Just a label on existing rows** (cheap — add `season` column
-     to committee_assignments, officer_terms, etc.)
-  2. **A schema branch** (committees themselves exist per-season; a
-     committee in 2024-25 is a different record from the same-named
-     one in 2025-26)
-  
-  **Decision-driving question:** if Tournament Admin Committee had
-  different members in 2024-25 vs 2025-26, do we model that as:
-  - Same committee, just different `season` values on assignments
-    (option 1)
-  - Two separate Committee records, one per season (option 2)
-  
-  Option 1 is much less work but constrains future flexibility.
-  Option 2 is more honest about reality but cascades into lots of UI
-  ("which season am I looking at?").
-  
-  **Pre-work:** decide which option matches AMTA's actual operational
-  reality. Talk through 2-3 real scenarios (committee dissolved
-  mid-season, member transferred between committees, person served
-  on Tournament Admin in 2022-23 AND 2024-25 but not 2023-24).
-  
-  **Scope when built:** Option 1 = half-day schema + UI to filter by
-  season. Option 2 = day or more, plus UI redesigns.
-  
-  **Decision needed by:** before populating board_terms (which has
-  the same question — terms ARE seasonal).
-
-- **📧 Secondary email on contacts: how do we model it?** ~~RESOLVED
-  May 13 — built as primary + secondary on contacts (no labels, no
-  separate table). See SHIPPED section.~~
-
-- **📚 Institutional memory: communications archive vs. richer
-  Interactions.** Reframed May 12: AMTA uses Notion as knowledge
-  base. Lower priority parking lot.
+- **📅 Seasons concept: how do we model July-June years?** Option 1
+  (label) vs Option 2 (schema branch). Blocks board_terms population.
 
 - **🗺️ Roadmap / Priorities tracker — separate entity, or extend
-  Projects?** Surfaced May 13. Three options outlined. Pre-work: look
-  at what `/projects` actually is today. Related but distinct from
-  Goals/OKRs (the spreadsheet tracks discrete initiatives, not
-  measurable outcomes).
+  Projects?**
+
+- **📚 Institutional memory: communications archive vs. richer
+  Interactions.** Lower priority — much goes to Notion.
 
 ---
 
 ## 🧊 ICEBOX
 
-- **`is_test` flag on programs.** Punted May 13. Only 1 test program.
-
-- **Allow emailless contacts.** Surfaced May 12. Lean: stay strict;
-  improve import surface.
-
-- **Recover alumni-claims-admin-mvp.md spec.** Low priority.
-
-- **Tabbed Event detail UI (v2 for judges).** When judge counts grow.
-
-- **Navigator.locks bug writeup.** Felt inauthentic.
-
-- **AI summary staleness.** Known issue, no fix scoped.
-
-- **Case file DB feature.** No current pull.
+- **`is_test` flag on programs.** Punted May 13.
+- **Allow emailless contacts.** Lean: stay strict.
+- **Recover alumni-claims-admin-mvp.md spec.**
+- **Tabbed Event detail UI (v2 for judges).**
+- **Navigator.locks bug writeup.**
+- **AI summary staleness.**
+- **Case file DB feature.**
 
 ---
 
 ## 📋 To write up
 
-- **Secondary email feature ship (May 13).** Five open design
-  questions resolved in one user paragraph: "Primary Email" and
-  "Secondary Email," user picks which is primary, works for board
-  members AND alumni AND anyone with multiple emails. Generic
-  primary/secondary scales to all combinations without a type field.
-  Lesson: sometimes the right answer is just a clean naming
-  convention. Schema migration captured in repo. The whole feature
-  shipped in one cohesive commit (schema + form + detail + AI search
-  + alumni signup) because we paused at "let's tackle this" to first
-  do the design thinking properly. **Real moment captured: when I
-  was about to write up the design discussion for parking, Jacinth's
-  paragraph laid out the actual answer — that's the value of
-  pushing back to think clearly.**
+- **🌟 The RLS-bypass-views audit (May 12-16).** The crown jewel
+  writeup of this week. Real arc: started as a single bug (B1, can't
+  delete Maggy conversation), reframed as RLS policy issue, reframed
+  again as the view layer bypassing RLS, deferred for a week of
+  patches as views drifted out of sync with their base tables,
+  finally executed as a proper audit on May 16.
+  
+  Key moments:
+  - May 12 morning: 403 on /alumni-signup → RLS policy debugging
+  - May 12 evening: realized active_* views bypass RLS entirely
+  - May 13: column-drift saga (3 instances in one day — active_
+    programs/country, active_contacts/secondary_email, the botched
+    recreate with missing is_admin)
+  - May 15: alumni location work brought one more instance, escalated
+    audit priority
+  - May 16: audit executed properly. Inventory revealed 23 views.
+    Tier 1 (AI views) shipped with confirmed active leak (Maggy
+    conversation disappeared post-migration — proving the bug was
+    real, not theoretical). Identified active_invitations as deeper
+    design problem worth deferring.
+  
+  Lessons throughout:
+  - Verify schema column lists BEFORE running migrations
+  - View column drift compounds — fix the underlying issue, not the
+    symptoms
+  - Pre-stage rollback files for high-risk migrations
+  - Smoke tests for security migrations need to verify "the right
+    data is visible" not just "the page loads"
+  - "Theoretical bug" can become "actual leak" the moment you
+    look more carefully — the Maggy conversation proved it
+  - "Knock it out" vs "do it right" — Tier 1 caught itself in a
+    half-mistake (forward vs rollback) and the pre-staged rollback
+    made it a non-event
 
-- **The active_programs/active_contacts view drift saga (May 13).**
-  Three instances in one day. Real lesson: schema additions are
-  half-finished until the view exposes them. Will be properly
-  addressed by tomorrow's RLS audit.
+- **Alumni signup quality improvements ship (May 15).** Bundled
+  .edu blocking + current city/state. Resolved a design discussion
+  in mid-session about whether to bundle remaining alumni form
+  expansion (decision: location + .edu only this session).
 
-- **Button height standardization (May 13).** Small but instructive —
-  the right primitive already existed in the codebase. Scan the
-  design system before extracting new abstractions.
+- **Secondary email feature ship (May 13).** Five design questions
+  resolved in one user paragraph.
 
-- **Collapsible sidebar ship (May 13).** Standard pattern; the
-  honest design choices are what's interesting (hover-to-expand
-  skipped, native title tooltips accepted, pending-claims pill
-  becoming a dot when collapsed).
+- **Button height standardization (May 13).** The right primitive
+  already existed.
 
-- **`/data` dashboard ship (May 13).** Three product threads:
-  one-map-or-two (toggle for vertical real-estate), alumni geo as
-  v1 limitation honestly framed, the engineering lesson of using
-  what fits each entity. Polish pass shipped same day.
+- **Collapsible sidebar ship (May 13).**
 
-- **`is_test` as a product-design exercise (May 13).** Three pushbacks
-  reshaped scope: category vs column for contacts, programs punted,
-  server-vs-client filtering policy.
+- **`/data` dashboard ship (May 13).**
 
-- **The DashboardPage collision (May 13).** Brief but instructive:
-  introducing a new feature folder, check it isn't occupied first.
+- **`is_test` as a product-design exercise (May 13).** Three
+  pushbacks reshaped scope.
 
-- **The botched view recreate + recovery (May 13).** Ran a DROP/CREATE
-  view before verifying the column list. Realized mid-execution that
-  I'd dropped the view and might be missing columns. Caught fast
-  because the sidebar Admin section silently disappeared (depended
-  on `is_admin` column which wasn't in the new view). Lesson: when
-  doing schema work, ALWAYS verify the source-of-truth column list
-  BEFORE running the migration, not after. And: silent breakage
-  ("the page still loads, things look mostly ok") is the most
-  dangerous failure mode — easy to miss without a careful sanity
-  check. Real-life version of a near-miss postmortem.
+- **The DashboardPage collision (May 13).**
 
-- **RLS debugging bug story (May 12 morning).** The 403 on
-  `/alumni-signup`.
+- **The botched view recreate + recovery (May 13).** ALWAYS verify
+  source-of-truth column list BEFORE running schema migrations.
+
+- **RLS debugging bug story (May 12 morning).** Subsumed into the
+  audit writeup above.
 
 - **Postgres views bypassing RLS bug story (May 12 evening).**
-  Will compose well with the May 13 column-drift saga into a
-  single bigger writeup about Postgres views as a recurring
-  footgun.
+  Subsumed into the audit writeup above.
 
 - **CSV import StrictMode bug story (May 12).**
 
