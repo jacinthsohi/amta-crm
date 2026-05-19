@@ -24,6 +24,11 @@ export type ProfileLoadState =
 /**
  * Loads a profile by magic-link token.
  *
+ * Note on parameter naming: the underlying Postgres functions use the
+ * `p_` prefix convention (p_token, p_contact_id, ...) to avoid ambiguity
+ * with column names inside the function bodies. PostgREST passes named
+ * args literally, so the client must match.
+ *
  * States:
  *   - loading: initial fetch in flight
  *   - no_token: caller passed null/empty (URL has no ?token=)
@@ -47,7 +52,7 @@ export function useProfile(token: string | null): ProfileLoadState {
 
     (async () => {
       const { data, error } = await supabase.rpc("get_profile_by_token", {
-        token,
+        p_token: token,
       });
 
       if (cancelled) return;
