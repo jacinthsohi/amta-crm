@@ -1,23 +1,60 @@
-import { useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "react-router-dom";
-import { Mail, Phone, MapPin, User } from "lucide-react";
-import { useProfile, type ProfileData } from "./hooks";
+import { Mail, Phone, MapPin, User, CheckCircle2 } from "lucide-react";
+import { useProfile, useUpdateProfile, type ProfileData } from "./hooks";
 import { formatLocation } from "@/lib/format-location";
+import { STATE_OPTIONS_FOR_DROPDOWN } from "@/lib/us-states";
+
+type Mode = "view" | "edit";
 
 export default function ProfilePage() {
   const [searchParams] = useSearchParams();
   const token = searchParams.get("token");
-  const state = useProfile(token);
+  const { state, setProfile } = useProfile(token);
+  const [mode, setMode] = useState<Mode>("view");
+  const [justSaved, setJustSaved] = useState(false);
+
+  // When the user saves successfully, show a confirmation banner that
+  // self-dismisses after a few seconds. Reset when the user starts
+  // editing again so a second save still flashes.
+  useEffect(() => {
+    if (!justSaved) return;
+    const t = setTimeout(() => setJustSaved(false), 4000);
+    return () => clearTimeout(t);
+  }, [justSaved]);
 
   return (
     <div className="min-h-screen bg-stone-50">
       <BrandHeader />
       <main className="mx-auto max-w-2xl px-4 py-8 sm:py-12">
+        {justSaved && <SavedBanner />}
         {state.status === "loading" && <LoadingState />}
         {state.status === "no_token" && <NoTokenState />}
         {state.status === "invalid" && <InvalidTokenState />}
         {state.status === "error" && <ErrorState message={state.message} />}
-        {state.status === "ready" && <ProfileView profile={state.data} />}
+        {state.status === "ready" && mode === "view" && (
+          <ProfileView
+            profile={state.data}
+            onEdit={() => {
+              setJustSaved(false);
+              setMode("edit");
+            }}
+          />
+        )}
+        {state.status === "ready" && mode === "edit" && token && (
+          <ProfileEdit
+            profile={state.data}
+            token={token}
+            onCancel={() => setMode("view")}
+            onSaved={(updated) => {
+              // Push the server-confirmed profile back into useProfile's
+              // state so view mode shows the saved values immediately.
+              setProfile(updated);
+              setMode("view");
+              setJustSaved(true);
+            }}
+          />
+        )}
       </main>
     </div>
   );
@@ -28,8 +65,6 @@ function BrandHeader() {
     <header className="border-b border-stone-200 bg-white">
       <div className="mx-auto max-w-2xl px-4 py-5">
         <div className="flex items-center gap-3">
-          {/* If you have a logo asset, swap this for an <img>. Mirroring the
-              alumni-signup pattern. */}
           <div className="flex h-9 w-9 items-center justify-center rounded-md bg-[#70172a] font-serif text-sm font-bold text-white">
             A
           </div>
@@ -42,6 +77,15 @@ function BrandHeader() {
         </div>
       </div>
     </header>
+  );
+}
+
+function SavedBanner() {
+  return (
+    <div className="mb-4 flex items-center gap-2 rounded-md border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800">
+      <CheckCircle2 className="h-4 w-4" />
+      <span>Profile saved.</span>
+    </div>
   );
 }
 
@@ -113,7 +157,17 @@ function MessageCard({
   );
 }
 
-function ProfileView({ profile }: { profile: ProfileData }) {
+// =============================================================================
+// View mode
+// =============================================================================
+
+function ProfileView({
+  profile,
+  onEdit,
+}: {
+  profile: ProfileData;
+  onEdit: () => void;
+}) {
   const fullName = useMemo(() => {
     const parts = [profile.first_name, profile.last_name].filter(Boolean);
     return parts.length > 0 ? parts.join(" ") : "Your profile";
@@ -122,13 +176,12 @@ function ProfileView({ profile }: { profile: ProfileData }) {
   const initials = useMemo(() => {
     const f = profile.first_name?.[0] ?? "";
     const l = profile.last_name?.[0] ?? "";
-    const result = (f + l).toUpperCase();
-    return result || "?";
+    return (f + l).toUpperCase() || "?";
   }, [profile.first_name, profile.last_name]);
 
   const locationText = formatLocation(
     profile.current_city,
-    profile.current_state
+    profile.current_state,
   );
 
   return (
@@ -202,23 +255,220 @@ function ProfileView({ profile }: { profile: ProfileData }) {
         </Row>
       </Section>
 
-      {/* Edit button — non-functional in Chunk 2, enabled in Chunk 3 */}
+      {/* Edit button */}
       <div className="pt-2">
         <button
           type="button"
-          disabled
-          className="w-full rounded-md bg-[#70172a] px-4 py-2.5 text-sm font-medium text-white opacity-50 sm:w-auto"
-          title="Editing will be available shortly"
+          onClick={onEdit}
+          className="w-full rounded-md bg-[#70172a] px-4 py-2.5 text-sm font-medium text-white transition-colors hover:bg-[#5a1222] sm:w-auto"
         >
           Edit profile
         </button>
-        <p className="mt-2 text-xs text-stone-400">
-          Editing will be enabled in the next update.
-        </p>
       </div>
     </div>
   );
 }
+
+// =============================================================================
+// Edit mode
+// =============================================================================
+
+type EditFormState = {
+  first_name: string;
+  last_name: string;
+  pronouns: string;
+  secondary_email: string;
+  phone: string;
+  current_city: string;
+  current_state: string;
+};
+
+function profileToFormState(p: ProfileData): EditFormState {
+  return {
+    first_name: p.first_name ?? "",
+    last_name: p.last_name ?? "",
+    pronouns: p.pronouns ?? "",
+    secondary_email: p.secondary_email ?? "",
+    phone: p.phone ?? "",
+    current_city: p.current_city ?? "",
+    current_state: p.current_state ?? "",
+  };
+}
+
+function ProfileEdit({
+  profile,
+  token,
+  onCancel,
+  onSaved,
+}: {
+  profile: ProfileData;
+  token: string;
+  onCancel: () => void;
+  onSaved: (updated: ProfileData) => void;
+}) {
+  const initial = useMemo(() => profileToFormState(profile), [profile]);
+  const [form, setForm] = useState<EditFormState>(initial);
+  const { mutate, isPending, error } = useUpdateProfile();
+
+  // Dirty check: only enable save if the user changed something.
+  const isDirty = useMemo(() => {
+    return (Object.keys(initial) as Array<keyof EditFormState>).some(
+      (k) => form[k] !== initial[k],
+    );
+  }, [form, initial]);
+
+  function update<K extends keyof EditFormState>(
+    key: K,
+    value: EditFormState[K],
+  ) {
+    setForm((prev) => ({ ...prev, [key]: value }));
+  }
+
+  function handleSubmit() {
+    // Trim everything before sending. Empty string becomes null on the
+    // server side, but the RPC accepts either.
+    const payload = {
+      p_token: token,
+      p_first_name: form.first_name.trim() || null,
+      p_last_name: form.last_name.trim() || null,
+      p_pronouns: form.pronouns.trim() || null,
+      p_secondary_email: form.secondary_email.trim() || null,
+      p_phone: form.phone.trim() || null,
+      p_current_city: form.current_city.trim() || null,
+      p_current_state: form.current_state.trim() || null,
+    };
+    mutate(payload, {
+      onSuccess: (updated) => onSaved(updated),
+    });
+  }
+
+  return (
+    <div className="space-y-6">
+      <section className="rounded-lg border border-stone-200 bg-white p-6">
+        <h1 className="text-lg font-semibold text-stone-900">
+          Edit your profile
+        </h1>
+        <p className="mt-1 text-sm text-stone-500">
+          Update what AMTA has on file. Your changes save when you click the
+          button at the bottom.
+        </p>
+      </section>
+
+      <Section title="Name & pronouns">
+        <Field label="First name">
+          <TextInput
+            value={form.first_name}
+            onChange={(v) => update("first_name", v)}
+            autoComplete="given-name"
+          />
+        </Field>
+        <Field label="Last name">
+          <TextInput
+            value={form.last_name}
+            onChange={(v) => update("last_name", v)}
+            autoComplete="family-name"
+          />
+        </Field>
+        <Field label="Pronouns" hint="Optional — e.g. she/her, they/them">
+          <TextInput
+            value={form.pronouns}
+            onChange={(v) => update("pronouns", v)}
+            placeholder="she/her"
+          />
+        </Field>
+      </Section>
+
+      <Section title="Contact">
+        <Field
+          label="Primary email"
+          hint={
+            <>
+              We keep this one locked so AMTA always has a reliable way to
+              reach you. To update it, send us a note at{" "}
+              <a
+                href="mailto:amta@collegemocktrial.org"
+                className="text-[#70172a] underline hover:no-underline"
+              >
+                amta@collegemocktrial.org
+              </a>{" "}
+              and we'll switch it on our end.
+            </>
+          }
+        >
+          <TextInput
+            value={profile.email ?? ""}
+            onChange={() => {}}
+            disabled
+          />
+        </Field>
+        <Field label="Secondary email" hint="Optional">
+          <TextInput
+            type="email"
+            value={form.secondary_email}
+            onChange={(v) => update("secondary_email", v)}
+            autoComplete="email"
+          />
+        </Field>
+        <Field label="Phone">
+          <TextInput
+            type="tel"
+            value={form.phone}
+            onChange={(v) => update("phone", v)}
+            autoComplete="tel"
+          />
+        </Field>
+      </Section>
+
+      <Section title="Location">
+        <Field label="City">
+          <TextInput
+            value={form.current_city}
+            onChange={(v) => update("current_city", v)}
+            placeholder="Midlands"
+            autoComplete="address-level2"
+          />
+        </Field>
+        <Field label="State">
+          <StateSelect
+            value={form.current_state}
+            onChange={(v) => update("current_state", v)}
+          />
+        </Field>
+      </Section>
+
+      {error && (
+        <div className="rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">
+          <div className="font-medium">Couldn't save your changes</div>
+          <div className="mt-1 text-xs text-red-700">{error.message}</div>
+        </div>
+      )}
+
+      {/* Action bar */}
+      <div className="flex flex-col-reverse gap-2 pt-2 sm:flex-row sm:justify-end">
+        <button
+          type="button"
+          onClick={onCancel}
+          disabled={isPending}
+          className="rounded-md border border-stone-300 bg-white px-4 py-2.5 text-sm font-medium text-stone-700 transition-colors hover:bg-stone-50 disabled:opacity-50"
+        >
+          Cancel
+        </button>
+        <button
+          type="button"
+          onClick={handleSubmit}
+          disabled={!isDirty || isPending}
+          className="rounded-md bg-[#70172a] px-4 py-2.5 text-sm font-medium text-white transition-colors hover:bg-[#5a1222] disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          {isPending ? "Saving…" : "Save changes"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// =============================================================================
+// Small UI primitives (local to this file — they're profile-specific)
+// =============================================================================
 
 function Section({
   title,
@@ -256,4 +506,75 @@ function Row({
 
 function Empty({ children }: { children: React.ReactNode }) {
   return <span className="text-stone-400">{children}</span>;
+}
+
+function Field({
+  label,
+  hint,
+  children,
+}: {
+  label: string;
+  hint?: React.ReactNode;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className="px-6 py-4">
+      <label className="block text-sm font-medium text-stone-700">
+        {label}
+      </label>
+      {hint && <div className="mt-0.5 text-xs text-stone-500">{hint}</div>}
+      <div className="mt-2">{children}</div>
+    </div>
+  );
+}
+
+function TextInput({
+  value,
+  onChange,
+  type = "text",
+  placeholder,
+  autoComplete,
+  disabled = false,
+}: {
+  value: string;
+  onChange: (v: string) => void;
+  type?: string;
+  placeholder?: string;
+  autoComplete?: string;
+  disabled?: boolean;
+}) {
+  return (
+    <input
+      type={type}
+      value={value}
+      onChange={(e) => onChange(e.target.value)}
+      placeholder={placeholder}
+      autoComplete={autoComplete}
+      disabled={disabled}
+      className="w-full rounded-md border border-stone-300 bg-white px-3 py-2 text-sm text-stone-900 placeholder:text-stone-400 focus:border-[#70172a] focus:outline-none focus:ring-1 focus:ring-[#70172a] disabled:bg-stone-50 disabled:text-stone-500"
+    />
+  );
+}
+
+function StateSelect({
+  value,
+  onChange,
+}: {
+  value: string;
+  onChange: (v: string) => void;
+}) {
+  return (
+    <select
+      value={value}
+      onChange={(e) => onChange(e.target.value)}
+      className="w-full rounded-md border border-stone-300 bg-white px-3 py-2 text-sm text-stone-900 focus:border-[#70172a] focus:outline-none focus:ring-1 focus:ring-[#70172a]"
+    >
+      <option value="">— Select —</option>
+      {STATE_OPTIONS_FOR_DROPDOWN.map((opt) => (
+        <option key={opt} value={opt}>
+          {opt}
+        </option>
+      ))}
+    </select>
+  );
 }

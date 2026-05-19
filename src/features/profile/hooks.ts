@@ -1,4 +1,5 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/lib/supabase";
 
 export type ProfileData = {
@@ -29,6 +30,11 @@ export type ProfileLoadState =
  * with column names inside the function bodies. PostgREST passes named
  * args literally, so the client must match.
  *
+ * Returns both the load state and a `setProfile` updater that callers
+ * can use to push fresh profile data into state (e.g. after a save).
+ * Without this, the view-mode display would show stale values after
+ * editing.
+ *
  * States:
  *   - loading: initial fetch in flight
  *   - no_token: caller passed null/empty (URL has no ?token=)
@@ -36,9 +42,12 @@ export type ProfileLoadState =
  *   - error: unexpected RPC failure
  *   - ready: profile loaded
  */
-export function useProfile(token: string | null): ProfileLoadState {
+export function useProfile(token: string | null): {
+  state: ProfileLoadState;
+  setProfile: (data: ProfileData) => void;
+} {
   const [state, setState] = useState<ProfileLoadState>(
-    token ? { status: "loading" } : { status: "no_token" }
+    token ? { status: "loading" } : { status: "no_token" },
   );
 
   useEffect(() => {
@@ -75,5 +84,50 @@ export function useProfile(token: string | null): ProfileLoadState {
     };
   }, [token]);
 
-  return state;
+  const setProfile = useCallback((data: ProfileData) => {
+    setState({ status: "ready", data });
+  }, []);
+
+  return { state, setProfile };
+}
+
+/**
+ * Payload for the update_my_profile RPC. All `p_` prefixed to match
+ * the Postgres function's parameter names. null clears the field.
+ */
+export type UpdateProfileInput = {
+  p_token: string;
+  p_first_name: string | null;
+  p_last_name: string | null;
+  p_pronouns: string | null;
+  p_secondary_email: string | null;
+  p_phone: string | null;
+  p_current_city: string | null;
+  p_current_state: string | null;
+};
+
+/**
+ * Mutation hook for saving profile edits.
+ *
+ * On success the RPC returns the updated profile JSON and refreshes
+ * the token's expiry by 30 days (per Chunk 1's design), so the same
+ * URL remains valid. Callers should plumb the returned ProfileData
+ * back into useProfile via setProfile so view-mode reflects the saved
+ * values immediately.
+ */
+export function useUpdateProfile() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (input: UpdateProfileInput): Promise<ProfileData> => {
+      const { data, error } = await supabase.rpc("update_my_profile", input);
+      if (error) throw error;
+      if (!data) throw new Error("Profile update returned no data");
+      return data as ProfileData;
+    },
+    onSuccess: () => {
+      // Future-proofing: if we later cache profiles via React Query,
+      // this is where we'd invalidate. No-op today.
+      queryClient.invalidateQueries({ queryKey: ["profile"] });
+    },
+  });
 }
