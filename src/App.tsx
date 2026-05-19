@@ -37,6 +37,7 @@ import TasksListPage from "@/features/tasks/TasksListPage";
 import AskPage from "@/features/ask/AskPage";
 import InteractionsListPage from "@/features/interactions/InteractionsListPage";
 import InteractionDetailPage from "@/features/interactions/InteractionDetailPage";
+import ProfilePage from "@/features/profile/ProfilePage";
 
 /**
  * Root route handler:
@@ -88,6 +89,7 @@ export default function App() {
               element={<FinishInvitationPage />}
             />
             <Route path="/alumni-signup" element={<AlumniSignupPage />} />
+            <Route path="/profile" element={<ProfilePage />} />
             <Route path="/privacy" element={<PrivacyPage />} />
 
             {/* Private — share the AppLayout shell */}
