@@ -2,16 +2,18 @@ import { useState } from "react";
 import { useMutation } from "@tanstack/react-query";
 import { Link2, Copy, Mail, Check, X } from "lucide-react";
 import { supabase } from "@/lib/supabase";
-import { Section } from "@/components/Section";
 
 /**
  * Profile self-service action: generates a magic-link URL the contact can
- * use to edit their own profile. Lives on the admin ContactDetailPage.
+ * use to edit their own profile. Lives in the sidebar of the admin
+ * ContactDetailPage as a compact action — it's used rarely (admin onboards
+ * a contact, contact lost their email, etc.), and the people clicking it
+ * already know what it does, so we keep the surface area minimal.
  *
- * Each click revokes any prior active tokens for the contact and issues a
- * fresh one (handled server-side by create_profile_token in Chunk 5's
+ * Each click revokes any prior active tokens for the contact and issues
+ * a fresh one (handled server-side by create_profile_token, see Chunk 5
  * migration). The result modal lets the admin copy the URL or hand it off
- * to their email client.
+ * to their default email client.
  */
 export function ProfileLinkSection({
   contactId,
@@ -32,9 +34,7 @@ export function ProfileLinkSection({
       });
       if (error) throw error;
       if (!data) throw new Error("Token creation returned no data");
-      // The RPC returns the raw token string; build the full URL.
-      const url = `${window.location.origin}/profile?token=${data}`;
-      return url;
+      return `${window.location.origin}/profile?token=${data}`;
     },
     onSuccess: (url) => {
       setGeneratedUrl(url);
@@ -44,31 +44,24 @@ export function ProfileLinkSection({
 
   return (
     <>
-      <Section
-        title="Profile self-service"
-        action={
-          <button
-            onClick={() => generate.mutate()}
-            disabled={generate.isPending}
-            className="flex items-center gap-1 text-xs px-2 py-1 rounded-md text-zinc-600 hover:text-maroon-700 hover:bg-maroon-50 transition-colors disabled:opacity-50"
-          >
-            <Link2 size={12} />
-            {generate.isPending ? "Generating…" : "Generate magic link"}
-          </button>
-        }
-      >
-        <div className="px-3 py-2.5 text-sm text-zinc-600">
-          Generate a personal link {contactFirstName} can use to update their
-          own contact info. Each link is good for 30 days and refreshes when
-          they save changes. Generating a new link disables any previous
-          link for this contact.
-        </div>
+      <div>
+        <h3 className="text-[11px] font-semibold tracking-wide uppercase text-zinc-500 mb-2.5">
+          Profile self-service
+        </h3>
+        <button
+          onClick={() => generate.mutate()}
+          disabled={generate.isPending}
+          className="flex items-center gap-1.5 text-xs px-2.5 py-1.5 rounded-md text-zinc-700 border border-zinc-200 bg-white hover:bg-zinc-50 transition-colors disabled:opacity-50"
+        >
+          <Link2 size={12} />
+          {generate.isPending ? "Generating…" : "Generate magic link"}
+        </button>
         {generate.error && (
-          <div className="mx-3 mb-3 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-800">
-            Couldn't generate a link: {generate.error.message}
+          <div className="mt-2 text-xs text-red-700">
+            {generate.error.message}
           </div>
         )}
-      </Section>
+      </div>
 
       {modalOpen && generatedUrl && (
         <LinkModal

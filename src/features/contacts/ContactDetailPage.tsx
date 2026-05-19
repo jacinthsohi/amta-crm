@@ -119,11 +119,6 @@ export default function ContactDetailPage() {
           style={{ gridTemplateColumns: "minmax(0, 1fr) 320px" }}
         >
           <div className="min-w-0">
-            <ProfileLinkSection
-              contactId={contact.id}
-              contactFirstName={contact.first_name}
-              contactEmail={contact.email}
-            />
             <OfficerTermsSection
               contact={contact}
               onAdd={() => setOfficerTermOpen(true)}
@@ -524,6 +519,12 @@ function Sidebar({ contact }: { contact: ContactDetailType }) {
           />
         </dl>
       </div>
+
+      <ProfileLinkSection
+        contactId={contact.id}
+        contactFirstName={contact.first_name}
+        contactEmail={contact.email}
+      />
 
       <div className="text-xs text-zinc-500 leading-relaxed">
         <p>
