@@ -33,6 +33,7 @@ import {
   formatAffiliationType,
   formatYearRange,
 } from "@/lib/format";
+import { formatLocation } from "@/lib/format-location";
 import { ContactForm } from "./ContactForm";
 import { BoardTermForm } from "./BoardTermForm";
 import { OfficerTermForm } from "./OfficerTermForm";
@@ -46,34 +47,6 @@ import { MeetingBrief } from "./MeetingBrief";
 
 function isCurrentBoard(c: { category_names: string[] }): boolean {
   return c.category_names.includes("Current Board Member");
-}
-
-/**
- * Format the contact's current location for display.
- * Rules:
- *   - both city + state (and state is a real US state): "Brooklyn, New York"
- *   - only city: "Brooklyn"
- *   - only state (real US state): "New York"
- *   - state is "International" or "Other" with no city: skip
- *     (not useful information on its own — those values exist only to let
- *     non-US alumni complete the form without lying about state)
- *   - state is "International" or "Other" WITH a city: show just the city
- *     ("Brooklyn, International" reads weirdly)
- *   - neither: returns null, caller doesn't render the row
- */
-function formatLocation(
-  city: string | null,
-  state: string | null,
-): string | null {
-  const c = city?.trim() || null;
-  const s = state?.trim() || null;
-
-  const isGenericState = s === "International" || s === "Other";
-
-  if (c && s && !isGenericState) return `${c}, ${s}`;
-  if (c) return c;
-  if (s && !isGenericState) return s;
-  return null;
 }
 
 export default function ContactDetailPage() {
