@@ -48,7 +48,7 @@ export const config = {
   runtime: "nodejs",
 };
 
-const FROM_EMAIL = "help@collegemocktrial.org";
+const FROM_EMAIL = "amta@collegemocktrial.org";
 const FROM_NAME = "American Mock Trial Association";
 
 // -----------------------------------------------------------------------------

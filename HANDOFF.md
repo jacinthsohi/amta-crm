@@ -118,7 +118,12 @@ Four commits, one migration (+ rollback), one new dependency
   token logic as one source of truth.
 - **UI — Option 2:** two separate sidebar buttons, not a third
   button crammed into the modal. Modal + mailto fallback preserved.
-- **From address:** `help@collegemocktrial.org`.
+- **From address:** `amta@collegemocktrial.org` — chosen because
+  it's the only `@collegemocktrial.org` mailbox currently monitored
+  regularly. `help@` reads better for transactional email and is
+  covered by the SendGrid domain auth, but switching to it needs an
+  ops change first (someone monitoring that inbox). Tracked as a
+  🟢 LOW backlog item; until then `amta@` is the honest choice.
 - **Plain text v1.** Branded HTML email wrapper deferred to v2
   (backlog 🟡 MEDIUM).
 - **Scope:** profile magic links + (next) invitations. NOT broader
@@ -214,7 +219,8 @@ This is necessary, not tech debt — but it's a footgun:
 - Brand color: maroon #70172a
 - AMTA contact email: amta@collegemocktrial.org (the locked primary
   email shown to board members in Profile V1)
-- Email from-address: help@collegemocktrial.org (SendGrid)
+- Email from-address: amta@collegemocktrial.org (SendGrid) — see
+  the 🟢 LOW backlog item about a future swap to help@
 
 ### Vercel env vars (for the email feature)
 

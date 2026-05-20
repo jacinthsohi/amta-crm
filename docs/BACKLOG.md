@@ -499,6 +499,20 @@ Last updated: May 17, 2026 — Email magic-link send shipped (backend + UI, Send
   worth extracting `src/features/profile/api.ts` so the `p_`
   prefix lives in one place. Rule-of-three threshold; not yet hit.
 
+- **Switch transactional email from-address to `help@collegemocktrial.org`.**
+  The May 17 magic-link send ships with `amta@collegemocktrial.org`
+  as the from-address (the `FROM_EMAIL` constant in
+  `api/send-magic-link.ts`) because `amta@` is the only mailbox
+  currently monitored regularly. `help@` reads better for
+  transactional email and is already covered by the
+  `collegemocktrial.org` domain authentication in SendGrid — so the
+  code change is a one-line constant swap. The REAL prerequisite is
+  operational, not technical: someone needs to actually monitor the
+  `help@` inbox so replies to magic-link / invitation emails don't
+  vanish. Do the ops setup first, THEN flip the constant (and any
+  future email function's from-address). Until then `amta@` is the
+  honest choice — it's a mailbox that's genuinely watched.
+
 - **Edge vs Node runtime — `api/` folder is mixed now.** As of
   May 17, `api/send-magic-link.ts` is the ONE function on the
   Vercel **Node** runtime; every other api/* function is **Edge**.
