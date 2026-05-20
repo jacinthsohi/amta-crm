@@ -13,11 +13,40 @@ handoff docs.
 - 💭 DESIGN DISCUSSIONS — open product questions, no clear shape yet
 - ✅ SHIPPED — done, kept here for momentum / portfolio context
 
-Last updated: May 16, 2026 — Profile V1 shipped (magic-link self-service); permissioning model design surfaced as new 🔴 HIGH blocker
+Last updated: May 17, 2026 — Email magic-link send shipped (backend + UI, SendGrid-gated finish remaining)
 
 ---
 
 ## ✅ Recently shipped
+
+- **📧 Email automation: profile magic-link send (backend + UI)**
+  (May 17, 2026) — Admins can email a profile magic link to a
+  contact directly from the CRM instead of copy/pasting from Gmail.
+  - `api/send-magic-link.ts` — Vercel serverless function. Verifies
+    the caller's JWT identifies a real user, THEN verifies that
+    user is an admin (`contacts.is_admin`) before doing privileged
+    work — a stricter bar than `contact-summary.ts` uses, because
+    this endpoint mints access tokens.
+  - New "Email link directly" button in the ContactDetailPage
+    sidebar (`ProfileLinkSection.tsx`), alongside the existing
+    "Generate link" modal flow. Disabled when the contact has no
+    email on file. The modal + "Compose email" mailto fallback are
+    untouched — two distinct flows preserved on purpose.
+  - DB: migration `20260517_create_profile_token_service.sql`
+    extracts the token revoke-then-issue logic into a private
+    `_mint_profile_token()` helper (single source of truth), and
+    adds `create_profile_token_service()` — a service-role-only
+    variant with NO `is_current_user_admin()` gate, since
+    service-role callers have no `auth.uid()`. Its safety is the
+    REVOKE: never granted to anon/authenticated.
+  - **NOT yet functional end to end — SendGrid-gated.** The whole
+    chain is verified working in prod *except* the actual email
+    send: `SENDGRID_API_KEY` is not set in Vercel (pending account
+    access) and the sending domain isn't authenticated yet. See
+    the "SendGrid-gated finish" item in 🔴 HIGH for the remaining
+    ~15-minute task. Until then, clicking the button mints a token
+    and returns a clean "Server misconfigured: SENDGRID_API_KEY is
+    not set" — proof the rest of the chain works.
 
 - **🔗 Profile V1: magic-link self-service profile editor**
   (May 16, 2026) — Six SECURITY DEFINER RPCs let board members
@@ -72,6 +101,38 @@ Last updated: May 16, 2026 — Profile V1 shipped (magic-link self-service); per
 ---
 
 ## 🔴 HIGH
+
+- **📧 SendGrid-gated finish: turn on the magic-link email send.**
+  The backend + UI for emailing profile magic links shipped May 17
+  (see ✅ Recently shipped). Everything works in prod except the
+  actual SendGrid send. Remaining steps, ~15 minutes once SendGrid
+  account access is in hand:
+  1. **Authenticate the `collegemocktrial.org` domain in SendGrid**
+     (Sender Authentication → SPF / DKIM / DMARC). Add the DNS
+     records SendGrid provides at the domain's DNS host. Required —
+     without it, emails land in spam. This is the slow step (DNS
+     propagation can take minutes to hours).
+  2. **Add `SENDGRID_API_KEY` to Vercel** env vars (Production).
+  3. **Redeploy** — env var changes don't apply to existing
+     deployments.
+  4. Click "Email link directly" on a contact, confirm a real
+     email arrives, and verify it lands in Inbox (not Spam /
+     Promotions).
+  Note: `PROFILE_LINK_BASE_URL` is already set in Vercel
+  (`https://crm.mocktrial.tech`) — done May 17.
+
+- **Email automation for invitations.** Currently copy/paste manual.
+  SEPARATE from the magic-link send shipped May 17 — that covered
+  *profile* magic links only. This is the *invitation* email flow
+  (`AcceptInvitationPage` / `FinishInvitationPage`): emailing a new
+  user their invitation link instead of hand-sending it. Now mostly
+  a known quantity — it's another SendGrid send, and
+  `api/send-magic-link.ts` is the working template to copy
+  (including the Node-runtime shape — see 🟢 LOW runtime note).
+  Still recommended to complete RLS Tier 2 before onboarding
+  additional users. Also intersects the active_invitations design
+  discussion: tightening invitation access may want its own
+  token-gated RPC.
 
 - **🔒 SECURITY / DESIGN: Permissioning model design — multi-tier
   internal users + external token-gated users.** Surfaced May 16 while
@@ -148,6 +209,12 @@ Last updated: May 16, 2026 — Profile V1 shipped (magic-link self-service); per
     get_profile_by_token, update_my_profile, create_profile_token,
     revoke_profile_token, add_my_affiliation, update_my_affiliation,
     delete_my_affiliation, search_programs_public).
+  - For server-side callers using the service role (e.g. Vercel
+    functions): a SECURITY DEFINER RPC with NO in-function auth gate
+    is acceptable IF it is REVOKE'd from anon/authenticated so only
+    the service role can call it, AND the calling function does its
+    own authorization first. `create_profile_token_service()`
+    (May 17) is the reference example.
   - For internal users with row-scoped access: probably the same
     pattern (SECURITY DEFINER RPC, function body checks role +
     ownership). But this needs design before committing.
@@ -174,6 +241,12 @@ Last updated: May 16, 2026 — Profile V1 shipped (magic-link self-service); per
     rest of the model first. The accept-invitation flow currently
     relies on the `true` UPDATE policy to write `auth_user_id`.
     Breaking that breaks onboarding silently.
+  - When the model lands, revisit the api/* functions' auth checks
+    for consistency — see the 🟢 LOW "api/* admin-check
+    inconsistency" item. `send-magic-link.ts` checks caller-is-
+    admin; `contact-summary.ts` and others check only caller-is-a-
+    user. That divergence is currently intentional but should be
+    made deliberate and uniform under the real model.
   - Lessons from Profile V1 SECURITY DEFINER work to carry forward:
     - Use `p_` prefix on function parameters to avoid ambiguity with
       column names. PostgREST passes named args literally, so the
@@ -239,10 +312,6 @@ Last updated: May 16, 2026 — Profile V1 shipped (magic-link self-service); per
   
   Estimated 1-2 hours per batch including smoke testing. Three
   focused sessions total. Order: A → B → C (lowest risk first).
-
-- **Email automation for invitations.** Currently copy/paste manual.
-  Unblocked by Tier 1 ship. Still recommended to complete Tier 2
-  before onboarding additional users.
 
 ---
 
@@ -330,6 +399,17 @@ Last updated: May 16, 2026 — Profile V1 shipped (magic-link self-service); per
   to alumni claim flows or alumni self-service generally. Pattern
   is established; this is mostly a UI/scope decision.*
 
+- **"Request login" button — self-service magic link.** A board
+  member who lost their link enters their email on the login page
+  and the system emails them a fresh magic link if a matching
+  contact exists. Surfaced repeatedly during email-automation
+  planning as a "nice bonus." Now genuinely small once SendGrid is
+  live: `send-magic-link.ts` already does the mint-and-send; this
+  is a public (non-admin) entrypoint to similar logic. Watch the
+  security shape — it must NOT reveal whether an email matches a
+  contact (always show the same "if that email is on file, we've
+  sent a link" message regardless).
+
 - **Sortable lists across Contacts / Programs / Events.**
 
 - **Profile / Settings page** separate from Contact record.
@@ -345,6 +425,13 @@ Last updated: May 16, 2026 — Profile V1 shipped (magic-link self-service); per
 - **Cascade soft-delete for committees, contacts, events.**
 
 - **Email Draft Generator.** Potential 6th AI feature.
+
+- **Branded HTML email template (email v2).** The May 17 magic-link
+  send uses plain text. A simple branded wrapper (AMTA logo, maroon
+  header, footer) would make transactional emails look more
+  legitimate and improve deliverability slightly. Deferred
+  deliberately from the v1 email work. Applies to both the
+  magic-link email and the invitation email once that ships.
 
 - **Profile V1 polish (Chunk 6 leftovers).** Deferred from the May
   16 build session because polish is most valuable closer to launch
@@ -381,6 +468,21 @@ Last updated: May 16, 2026 — Profile V1 shipped (magic-link self-service); per
   Discovered May 16 when forward migration didn't run because
   rollback was pasted first.
 
+- **api/* admin-check inconsistency — revisit under permissioning
+  model.** As of May 17, `api/send-magic-link.ts` verifies the
+  caller is an admin (JWT identifies a user AND
+  `contacts.is_admin = true`) before doing privileged work. The
+  other api/* functions — `contact-summary.ts`, `meeting-brief.ts`,
+  and likely `ask.ts` / `ask-title.ts` — verify only that the
+  caller is a logged-in user, NOT that they're an admin. This
+  divergence is currently INTENTIONAL: minting an access token is
+  higher-stakes than generating an AI summary, so it earned the
+  stricter gate. But it's an inconsistency that should be made
+  deliberate and uniform when the permissioning model lands —
+  decide per-endpoint what bar each one needs. Not urgent; the AI
+  summary endpoints are low-stakes. Flagged so the inconsistency
+  reads as a recorded decision, not an oversight.
+
 - **`api/meeting-brief.ts` test-data filter follow-up.**
 - **`api/meeting-brief.ts` and `api/contact-summary.ts` secondary
   email visibility.**
@@ -396,6 +498,30 @@ Last updated: May 16, 2026 — Profile V1 shipped (magic-link self-service); per
   calls across multiple files. When there are 5+ call sites it's
   worth extracting `src/features/profile/api.ts` so the `p_`
   prefix lives in one place. Rule-of-three threshold; not yet hit.
+
+- **Edge vs Node runtime — `api/` folder is mixed now.** As of
+  May 17, `api/send-magic-link.ts` is the ONE function on the
+  Vercel **Node** runtime; every other api/* function is **Edge**.
+  This is not tech debt to fix — it's a necessary split — but it
+  IS a footgun worth recording:
+  - The `@sendgrid/mail` SDK depends on Node built-ins (`fs`,
+    `path`) the Edge runtime does not provide. Any function using
+    it MUST declare `runtime: "nodejs"`.
+  - Edge and Node handlers have DIFFERENT signatures. Edge gets a
+    Web-standard `Request` and returns a `Response`. Node gets
+    Express-style `(req, res)` — `req.headers` is a plain object
+    (no `.get()`), `req.body` is pre-parsed, responses go out via
+    `res.status(n).json(...)`. Switching a function's runtime
+    means rewriting all of its request/response plumbing, not
+    just the `config` line.
+  - This bit twice during the May 17 build: first an Edge-runtime
+    build failure (`@sendgrid` referencing `fs`/`path`), then,
+    after switching to Node, a runtime crash
+    (`request.headers.get is not a function`) because the body was
+    still Edge-shaped.
+  - `send-magic-link.ts` has a prominent header comment explaining
+    all this. Future email functions (the invitation send) should
+    copy `send-magic-link.ts` as the Node-runtime template.
 
 ---
 
@@ -466,6 +592,15 @@ Last updated: May 16, 2026 — Profile V1 shipped (magic-link self-service); per
   accept-invitation flow needs its own SECURITY DEFINER RPC for
   the linkage step. So the full invitations refactor needs to
   pair with the permissioning work.
+
+  **Update (May 17):** the email-automation work added another
+  relevant precedent — `create_profile_token_service()`, a
+  service-role-only SECURITY DEFINER RPC with no in-function auth
+  gate, called by a Vercel function that does its own admin check.
+  If option 3 (dedicated endpoint) wins for invitations, that's
+  the shape: the endpoint authorizes, a service-role RPC does the
+  work. Options 1 and 3 are no longer far apart now that there's a
+  working serverless-function precedent.
   
   **Blocks:** the Tier 1 RLS audit from being fully complete. The
   invitations views are the only Tier 1 views not yet fixed.
@@ -497,6 +632,56 @@ Last updated: May 16, 2026 — Profile V1 shipped (magic-link self-service); per
 ---
 
 ## 📋 To write up
+
+- **📧 Email automation: magic-link send (May 17).** Half-day
+  session, executed the "option 2" plan from the May 16 handoff —
+  do all the email work that DIDN'T need SendGrid account access,
+  since access was pending. Shipped the entire backend + UI for
+  emailing profile magic links; only the live SendGrid send
+  remains, gated on account access.
+  
+  The arc:
+  - Started blocked: SendGrid account confirmed to exist, but
+    Jacinth couldn't log in yet. Chose to build everything up to
+    the send rather than pivot to the Seasons fallback — email is
+    the bigger external-user win.
+  - Auth design decision: `send-magic-link.ts` verifies the caller
+    is an *admin*, not just a logged-in user — a stricter bar than
+    `contact-summary.ts`, because minting an access token is
+    higher-stakes than generating a summary.
+  - Option A vs B on token minting: chose A (a dedicated
+    service-role RPC, `create_profile_token_service`) over B
+    (re-implementing the revoke-then-insert in TypeScript) — to
+    keep token logic as a single source of truth. Extracted
+    `_mint_profile_token()` as a shared private helper so even the
+    two SQL functions don't duplicate.
+  - UI: two sidebar buttons (Option 2 of the flow choices) —
+    "Generate link" (modal, unchanged) and "Email link directly"
+    (server send, no modal). Mailto fallback preserved.
+  
+  Gotchas that bit us — the Edge-vs-Node runtime saga:
+  - `@sendgrid/mail` needs Node built-ins (`fs`, `path`). Declaring
+    the function as Edge runtime → build failure
+    (`referencing unsupported modules: @sendgrid: fs, path`).
+  - Switched `runtime: "edge"` → `"nodejs"`. Build passed, but the
+    function crashed at runtime: `request.headers.get is not a
+    function`. Cause: the function body was still written in Edge
+    style (Web `Request`/`Response`), but Node-runtime handlers
+    get Express-style `(req, res)`. Had to rewrite all the I/O
+    plumbing.
+  - Then walked the function to completion via a sequence of
+    config errors, each one progress: "PROFILE_LINK_BASE_URL is
+    not set" → set it, redeploy → "SENDGRID_API_KEY is not set",
+    which is the expected final pre-SendGrid state. Walking a
+    function to done via successive clear error messages turned
+    out to be a clean verification method.
+  - Lesson: switching a Vercel function's runtime is not a
+    one-line config change — Edge and Node have genuinely
+    different handler APIs. `send-magic-link.ts` is now the lone
+    Node-runtime function and has a header comment saying so.
+  - Smaller process note: the migration didn't apply the first
+    time because the SQL editor ran only the statement under the
+    cursor, not the whole file. Select-all before running.
 
 - **🔗 Profile V1: magic-link self-service editor (May 16).** The big
   ship of this session. End-to-end shipped in one flight session:
