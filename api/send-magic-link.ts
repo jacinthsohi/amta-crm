@@ -237,13 +237,18 @@ export default async function handler(
 
   const firstName = targetContact.first_name || "there";
   const emailText = buildMagicLinkEmailText(firstName, magicUrl);
+  const emailHtml = buildMagicLinkEmailHtml(firstName, magicUrl);
 
   try {
     await sg.send({
       to: targetContact.email,
       from: { email: FROM_EMAIL, name: FROM_NAME },
       subject: "Your AMTA profile link",
+      // Both parts are sent. Clients that render HTML show the branded
+      // version; text-only clients (and users who prefer plain text) get
+      // the text fallback. Keep the two in sync if the copy changes.
       text: emailText,
+      html: emailHtml,
     });
   } catch (e) {
     // SendGrid SDK errors carry a response body with useful detail.
@@ -259,8 +264,10 @@ export default async function handler(
 }
 
 // -----------------------------------------------------------------------------
-// Email body — plain text v1. Branded HTML wrapper is a deferred v2 item.
-// Mirrors the copy from the Profile V1 "Compose email" mailto draft.
+// Email body — TWO representations, kept in sync:
+//   buildMagicLinkEmailText — plain-text fallback
+//   buildMagicLinkEmailHtml — branded HTML version
+// If the copy changes, update BOTH.
 // -----------------------------------------------------------------------------
 
 function buildMagicLinkEmailText(firstName: string, magicUrl: string): string {
@@ -275,4 +282,153 @@ The link is good for 30 days and refreshes whenever you save changes. Just click
 Let me know if you have any trouble!
 
 — AMTA`;
+}
+
+// -----------------------------------------------------------------------------
+// Branded HTML email.
+//
+// EMAIL HTML IS NOT WEB HTML — read before editing:
+//   - Layout is TABLE-based, not flexbox/grid. Outlook renders with Word's
+//     engine and ignores modern CSS. Tables are the only reliable layout.
+//   - All styling is INLINE (style="..."). <style> blocks are stripped or
+//     ignored by several major clients (notably Gmail in some contexts).
+//   - Fonts are a SYSTEM stack. Web fonts do not load in most email clients.
+//   - The logo is a hosted PNG referenced by absolute URL. It is WHITE, so it
+//     only appears inside the maroon header band — never on white.
+//   - The logo has an explicit width (200) and `height:auto` so it keeps its
+//     true aspect ratio whatever the source dimensions are, and an `alt` so
+//     the email still reads if a client blocks images by default.
+//   - The CTA is a real <a> styled as a button. SendGrid click-tracking
+//     rewrites the href, but the visible LABEL ("Update My Profile") stays
+//     clean — which is the whole point: the recipient never sees a scary
+//     tracking URL.
+//   - The raw URL is also printed below the button as a fallback for the
+//     rare client that won't render the styled link.
+// -----------------------------------------------------------------------------
+
+const AMTA_MAROON = "#70172a";
+const AMTA_LOGO_URL =
+  "https://collegemocktrial.org/wp-content/uploads/2025/11/cropped-Main-Logo-White.png";
+const EMAIL_FONT_STACK =
+  "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif";
+
+function buildMagicLinkEmailHtml(firstName: string, magicUrl: string): string {
+  // Minimal escaping for the one piece of interpolated free text (the name).
+  // magicUrl is system-generated (origin + token) so it isn't user content,
+  // but firstName comes from the contacts table.
+  const safeName = escapeHtml(firstName);
+
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Your AMTA profile link</title>
+</head>
+<body style="margin:0; padding:0; background-color:#f3f4f6;">
+  <!-- Outer wrapper: light gray, full width -->
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0"
+         style="background-color:#f3f4f6; margin:0; padding:0;">
+    <tr>
+      <td align="center" style="padding:24px 12px;">
+
+        <!-- Card: fixed max width, centered -->
+        <table role="presentation" width="600" cellpadding="0" cellspacing="0"
+               style="width:600px; max-width:600px; background-color:#ffffff;
+                      border-radius:8px; overflow:hidden;">
+
+          <!-- Maroon header band with white logo -->
+          <tr>
+            <td align="center"
+                style="background-color:${AMTA_MAROON}; padding:28px 24px;">
+              <img src="${AMTA_LOGO_URL}"
+                   alt="American Mock Trial Association"
+                   width="200"
+                   style="display:block; width:200px; max-width:200px;
+                          height:auto; border:0;">
+            </td>
+          </tr>
+
+          <!-- White interior -->
+          <tr>
+            <td style="padding:32px 32px 8px 32px; font-family:${EMAIL_FONT_STACK};
+                       color:#27272a; font-size:16px; line-height:1.6;">
+              <p style="margin:0 0 16px 0;">Hi ${safeName},</p>
+              <p style="margin:0 0 16px 0;">
+                Here's a personal link you can use to update your contact
+                info on file with AMTA.
+              </p>
+            </td>
+          </tr>
+
+          <!-- Button -->
+          <tr>
+            <td align="center" style="padding:8px 32px 24px 32px;">
+              <table role="presentation" cellpadding="0" cellspacing="0">
+                <tr>
+                  <td align="center"
+                      style="background-color:${AMTA_MAROON}; border-radius:6px;">
+                    <a href="${magicUrl}"
+                       style="display:inline-block; padding:13px 28px;
+                              font-family:${EMAIL_FONT_STACK}; font-size:16px;
+                              font-weight:600; color:#ffffff;
+                              text-decoration:none;">
+                      Update My Profile
+                    </a>
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+
+          <!-- Fine print + raw-URL fallback -->
+          <tr>
+            <td style="padding:0 32px 28px 32px; font-family:${EMAIL_FONT_STACK};
+                       color:#52525b; font-size:14px; line-height:1.6;">
+              <p style="margin:0 0 16px 0;">
+                The link is good for 30 days and refreshes whenever you save
+                changes. No password needed &mdash; just tap the button and
+                you'll be able to update your name, pronouns, phone, and
+                other details directly.
+              </p>
+              <p style="margin:0 0 4px 0; color:#71717a; font-size:13px;">
+                If the button doesn't work, copy and paste this link:
+              </p>
+              <p style="margin:0; font-size:13px; word-break:break-all;">
+                <a href="${magicUrl}" style="color:${AMTA_MAROON};">${magicUrl}</a>
+              </p>
+            </td>
+          </tr>
+
+          <!-- Footer -->
+          <tr>
+            <td style="padding:20px 32px; background-color:#fafafa;
+                       border-top:1px solid #e4e4e7;
+                       font-family:${EMAIL_FONT_STACK}; color:#a1a1aa;
+                       font-size:12px; line-height:1.5;">
+              <p style="margin:0;">
+                American Mock Trial Association &middot; You're receiving this
+                because someone at AMTA generated a profile link for you. If
+                that wasn't expected, you can safely ignore this email.
+              </p>
+            </td>
+          </tr>
+
+        </table>
+
+      </td>
+    </tr>
+  </table>
+</body>
+</html>`;
+}
+
+// Minimal HTML-escape for interpolated text values.
+function escapeHtml(s: string): string {
+  return s
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
 }
