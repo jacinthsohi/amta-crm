@@ -20,6 +20,15 @@ hypothesized model (Super Admin / Admin / Internal User / External).
 **Next session: email automation** (sending invitations + magic links
 from the CRM instead of copy/paste from Gmail).
 
+**Fallback if email is blocked** (e.g. SendGrid access pending):
+work the Seasons concept design discussion. It's the kind of thing
+that might wrap quickly once you walk through Option 1 (label) vs
+Option 2 (schema branch) consequences, and resolving it unblocks
+board_terms population, current-vs-past committee distinction, and
+richer data viz granularity (first-year vs second-year candidates,
+term-by-term breakdowns). See backlog 💭 Design Discussions for
+existing framing.
+
 ---
 
 ## What shipped this session
