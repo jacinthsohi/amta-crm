@@ -525,13 +525,6 @@ function Sidebar({ contact }: { contact: ContactDetailType }) {
         contactFirstName={contact.first_name}
         contactEmail={contact.email}
       />
-
-      <div className="text-xs text-zinc-500 leading-relaxed">
-        <p>
-          A global search across all contacts, projects, events, and
-          interactions ships in Phase 4f.
-        </p>
-      </div>
     </div>
   );
 }
