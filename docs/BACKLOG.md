@@ -13,11 +13,21 @@ handoff docs.
 - 💭 DESIGN DISCUSSIONS — open product questions, no clear shape yet
 - ✅ SHIPPED — done, kept here for momentum / portfolio context
 
-Last updated: May 16, 2026 — Tier 1 RLS audit shipped, active leak closed
+Last updated: May 16, 2026 — Profile V1 shipped (magic-link self-service); permissioning model design surfaced as new 🔴 HIGH blocker
 
 ---
 
 ## ✅ Recently shipped
+
+- **🔗 Profile V1: magic-link self-service profile editor**
+  (May 16, 2026) — Six SECURITY DEFINER RPCs let board members
+  edit their own profile (basics + program affiliations) via a
+  30-day token. Admins generate links from ContactDetailPage. End
+  to end functional: name/pronouns/contact/location/affiliations
+  all self-serviceable. Soft delete for affiliations (the schema
+  pattern already existed). Established the token-gated RPC
+  pattern that should carry forward to other public-by-token
+  flows. See "📋 To write up" for the full narrative.
 
 - **🔒 SECURITY: Closed RLS bypass on AI views (Tier 1 of audit)**
   (May 16, 2026)
@@ -63,6 +73,120 @@ Last updated: May 16, 2026 — Tier 1 RLS audit shipped, active leak closed
 
 ## 🔴 HIGH
 
+- **🔒 SECURITY / DESIGN: Permissioning model design — multi-tier
+  internal users + external token-gated users.** Surfaced May 16 while
+  scoping the active_invitations RLS work (Profile V1 session).
+  Currently load-bearing for several other backlog items.
+
+  **Current state (placeholder, not bug):**
+  - `is_current_user_admin()` is a binary — you're either an admin or
+    an authenticated non-admin.
+  - The `contacts` table has `true` on all RLS policies (SELECT,
+    INSERT, UPDATE, DELETE). Any authenticated user can read or
+    modify any contact. This is NOT a vulnerability discovery — it's
+    been this way since the initial schema. It reflects that we
+    haven't designed the real model yet, not that the real model is
+    "everyone gets everything."
+  - Other tables (e.g. `invitations`) ARE properly admin-gated via
+    `is_current_user_admin()`.
+  - External (non-authed) access works today via the
+    token-gated SECURITY DEFINER RPC pattern, established and
+    battle-tested by Profile V1 (May 16) — magic-link holders can
+    read/edit a whitelisted slice of their own data without ever
+    being an authenticated user.
+
+  **Hypothesized target model (Jacinth, May 16):**
+  - **Super Admin** — full access, can modify permissions for others.
+    Today's `is_admin = true` users are effectively this.
+  - **Admin** — most internal management actions but not
+    permission-changing or destructive ops on other admins.
+  - **Internal User** — read access to most things, write access
+    scoped to their own work (their interactions, their assigned
+    tasks, etc.). Probably the largest internal cohort eventually.
+  - **External** — magic-link holders, no auth account required.
+    Can ONLY read/edit their own whitelisted profile data via the
+    token-gated RPC pattern. Already exists today (Profile V1).
+
+  **Open design questions that need resolution before implementation:**
+  1. Is the role stored on `contacts` (e.g. `internal_role` enum) or
+     elsewhere (a `user_roles` table joined to auth.users)? The
+     latter is more flexible for users with multiple hats; the
+     former is simpler.
+  2. How granular do policies need to be? Per-table is the obvious
+     start. Per-row (e.g. "Internal Users see only their assigned
+     contacts") is much more work — defer unless needed.
+  3. Do we expose roles in the admin UI for self-service permission
+     management, or stay SQL-only for now? Self-service is real work;
+     SQL-only is fine for ~10 internal users.
+  4. Migration strategy: tighten policies cautiously (start
+     read-only, then mutations) and pair with a re-grant of full
+     access to any Super Admin so we never lock ourselves out.
+  5. How does `auth_user_id` linkage work post-accept-invitation in
+     the new model? Today's `AcceptInvitationPage` does a direct
+     write to `contacts.auth_user_id` which passes because of the
+     `true` policy. In a tightened model, this may need to be its
+     own SECURITY DEFINER RPC.
+
+  **Why this is now load-bearing:**
+  - **Blocks Tier 2/3 RLS audit completion.** Fixing the `active_*`
+    view bypass is half the work; without a real permissioning
+    model, the policies the views invoke are themselves
+    placeholders, so the "fix" would just enforce permissive logic.
+  - **Blocks active_invitations design.** Whatever pattern wins for
+    invitations (probably token-gated SECURITY DEFINER, mirroring
+    Profile V1) should be designed against the target model, not
+    today's binary one.
+  - **Blocks any future "let a non-admin user X do Y" feature.**
+    Every such feature today requires either an `is_admin` toggle
+    (overly broad) or a code-level check (fragile).
+
+  **Established pattern that should carry forward:**
+  - For external (non-authed) access by token: SECURITY DEFINER RPC,
+    REVOKE PUBLIC + GRANT EXECUTE to anon/authenticated, with the
+    function body doing the auth check (e.g. validating a token).
+    Profile V1 shipped eight of these (verify_profile_token,
+    get_profile_by_token, update_my_profile, create_profile_token,
+    revoke_profile_token, add_my_affiliation, update_my_affiliation,
+    delete_my_affiliation, search_programs_public).
+  - For internal users with row-scoped access: probably the same
+    pattern (SECURITY DEFINER RPC, function body checks role +
+    ownership). But this needs design before committing.
+
+  **Suggested next steps:**
+  1. Workshop the four open questions above into concrete answers.
+     One focused session with this entry as the brief.
+  2. Sketch the migration shape (what new columns/tables, what new
+     functions, what existing policies change). Pre-stage rollback
+     files because policy migrations are high-risk.
+  3. Ship in tightly-scoped phases: Super Admin role first (smallest
+     blast radius), then Internal User, then per-row scoping where
+     needed.
+  4. Re-open the active_invitations + Tier 2/3 entries; they
+     unblock as soon as the model is decided, even before
+     implementation.
+
+  **Notes for future sessions:**
+  - The current `is_current_user_admin()` function is the natural
+    extension point — add `is_current_user_super_admin()`,
+    `is_current_user_internal()`, etc. alongside it rather than
+    refactoring.
+  - DO NOT tighten the `contacts` table policies without doing the
+    rest of the model first. The accept-invitation flow currently
+    relies on the `true` UPDATE policy to write `auth_user_id`.
+    Breaking that breaks onboarding silently.
+  - Lessons from Profile V1 SECURITY DEFINER work to carry forward:
+    - Use `p_` prefix on function parameters to avoid ambiguity with
+      column names. PostgREST passes named args literally, so the
+      client must match.
+    - Postgres won't let you change a function's return type via
+      CREATE OR REPLACE; you have to DROP first. Pick the JSON-vs-
+      JSONB choice once and stay consistent.
+    - VERIFY SCHEMA before writing migrations. Both program_affiliations
+      and programs had `deleted_at` columns Claude wasn't expecting,
+      which would have caused subtle bugs if not caught.
+    - REVOKE PUBLIC + GRANT EXECUTE to anon/authenticated for every
+      SECURITY DEFINER function. The default grants are too permissive.
+
 - **🔒 SECURITY: RLS audit Tier 2/3 — close bypass on remaining ~19
   active_* views.** Tier 1 (AI views) shipped May 16. Tier 2/3 covers
   views over data with admin-only RLS, plus lower-risk operational
@@ -71,7 +195,12 @@ Last updated: May 16, 2026 — Tier 1 RLS audit shipped, active leak closed
     or information_schema (NEVER from memory — lessons from May 13)
   - DROP + CREATE with `WITH (security_invoker = true)`
   - Smoke test of any feature querying it
-  
+
+  **⚠️ Now blocked by the permissioning model design above** — the
+  view fix is necessary but not sufficient; the policies they'd then
+  enforce are still placeholders (see contacts table `true` policies).
+  Decide the model first, then this work becomes mechanical.
+
   **Inventory** (all currently owned by postgres, all bypass RLS):
   - active_board_terms
   - active_committee_assignments
@@ -146,6 +275,10 @@ Last updated: May 16, 2026 — Tier 1 RLS audit shipped, active leak closed
 - **Tighten `alumni_claims` RLS to admin-only.**
 
 - **Combobox UX for the program dropdown on `/alumni-signup`.**
+  *Profile V1 (May 16) shipped a reusable `ProgramCombobox`
+  component (`src/features/profile/ProgramCombobox.tsx`) backed by
+  the public `search_programs_public` RPC. Adopting it on
+  /alumni-signup is mostly a swap-out + RPC GRANT verification.*
 
 - **Expand alumni signup form fields (remaining candidates).** After
   location + .edu shipped May 15, remaining alumni form expansion:
@@ -163,6 +296,10 @@ Last updated: May 16, 2026 — Tier 1 RLS audit shipped, active leak closed
 - **Click-through from `/data` heatmap to filtered list pages.**
 
 - **Self-service profile editing for alumni (Phase 3).**
+  *Note (May 16): Profile V1 covers board members via magic link.
+  "Alumni Phase 3" would extend the same token-gated RPC pattern
+  to alumni claim flows or alumni self-service generally. Pattern
+  is established; this is mostly a UI/scope decision.*
 
 - **Sortable lists across Contacts / Programs / Events.**
 
@@ -179,6 +316,22 @@ Last updated: May 16, 2026 — Tier 1 RLS audit shipped, active leak closed
 - **Cascade soft-delete for committees, contacts, events.**
 
 - **Email Draft Generator.** Potential 6th AI feature.
+
+- **Profile V1 polish (Chunk 6 leftovers).** Deferred from the May
+  16 build session because polish is most valuable closer to launch
+  (board meeting is July):
+  - Friendlier network error copy — detect TypeError/ERR_CONNECTION_
+    CLOSED specifically, say "Couldn't reach AMTA — check your
+    connection and try again" instead of raw error message.
+  - Auto-retry on transient network errors via React Query's
+    `retry: 2` with exponential backoff. Catches in-flight WiFi
+    blips silently (saw exactly this during May 16 testing).
+  - Loading skeletons for the profile page instead of "Loading…"
+  - Mobile responsiveness pass — text scaling, modal width,
+    combobox dropdown height on phone-sized viewports.
+  - Replace `window.confirm` on affiliation delete with a styled
+    confirm dialog (lower priority since soft delete means
+    mis-clicks are recoverable).
 
 ---
 
@@ -208,6 +361,12 @@ Last updated: May 16, 2026 — Tier 1 RLS audit shipped, active leak closed
 - **Refresh contact-relationships screenshot in README.**
 - **Clean up 308 latent TS errors incrementally.**
 - **Add `npm run build` step to pre-push workflow.**
+
+- **Thin API-wrapper layer for token-gated RPCs.** Profile V1
+  scattered `supabase.rpc("update_my_profile", { p_token, ... })`
+  calls across multiple files. When there are 5+ call sites it's
+  worth extracting `src/features/profile/api.ts` so the `p_`
+  prefix lives in one place. Rule-of-three threshold; not yet hit.
 
 ---
 
@@ -264,6 +423,20 @@ Last updated: May 16, 2026 — Tier 1 RLS audit shipped, active leak closed
   Decision should consider whether we'll have other "public read by
   token" patterns (alumni claims approval? event invites?) — if yes,
   a generic RPC pattern is worth investing in.
+
+  **Update (May 16):** Profile V1 effectively proved out option 1
+  by shipping 8 token-gated SECURITY DEFINER RPCs in production.
+  Pattern works and is the strong lean here. BUT this entry is now
+  also blocked by the permissioning model design discussion in
+  🔴 HIGH — the active_invitations design should land *against*
+  the target permissioning model, not today's binary one.
+  Specifically: `FinishInvitationPage` writes
+  `contacts.auth_user_id` directly, which only works because of
+  the `contacts` table's `true` UPDATE policy. Tightening that
+  policy (which the permissioning model probably will) means the
+  accept-invitation flow needs its own SECURITY DEFINER RPC for
+  the linkage step. So the full invitations refactor needs to
+  pair with the permissioning work.
   
   **Blocks:** the Tier 1 RLS audit from being fully complete. The
   invitations views are the only Tier 1 views not yet fixed.
@@ -295,6 +468,75 @@ Last updated: May 16, 2026 — Tier 1 RLS audit shipped, active leak closed
 ---
 
 ## 📋 To write up
+
+- **🔗 Profile V1: magic-link self-service editor (May 16).** The big
+  ship of this session. End-to-end shipped in one flight session:
+  six chunks planned, five executed (Chunk 6 polish deferred). The
+  arc:
+  - Chunk 1: magic-link infrastructure (4 RPCs, profile_access_tokens
+    table). Carried forward from earlier in the session.
+  - Chunk 2: read-only profile page with three error states
+    (no token / expired / load error).
+  - Chunk 3: editable basic fields, separate-edit-mode UX.
+  - Chunk 5: admin "Generate magic link" action with revoke-on-
+    regenerate semantics. Initially shipped as a full-width section
+    but immediately moved to sidebar after one round of feedback —
+    "page is getting messy."
+  - Chunk 4: editable affiliations + ProgramCombobox + soft delete.
+    The biggest chunk; needed three new RPCs plus an extension to
+    get_profile_by_token.
+  
+  Design decisions that mattered:
+  - **Token-gated SECURITY DEFINER RPCs, not permissive RLS.** Six
+    public RPCs, all REVOKE PUBLIC + GRANT EXECUTE to anon/authed,
+    with function bodies that validate the token and check
+    ownership before mutating. Establishes the pattern now expected
+    to carry through to invitations and any other public-by-token
+    flow.
+  - **Primary email is locked.** Self-service editing is for
+    name/pronouns/contact/location/affiliations but NOT primary
+    email. Friendlier copy ("we keep this locked so AMTA always has
+    a reliable way to reach you" + mailto link) instead of curt
+    refusal.
+  - **Affiliations: full add/edit/remove, but soft delete.** Was
+    going to introduce typed-confirmation friction for delete until
+    we discovered the schema *already* had `deleted_at` columns.
+    The right design (recoverable delete via admin) was already
+    half-built — we just had to wire up to it. Confirmed working
+    end-to-end via SQL editor showing deleted_at timestamps.
+  - **Combobox for 483 programs.** Searchable, debounced, keyboard-
+    navigable, shows top 20 with empty query. Now lives in
+    `src/features/profile/ProgramCombobox.tsx`. Reusable —
+    /alumni-signup should adopt it.
+  
+  Gotchas that bit us:
+  - **`p_` prefix on function parameters.** First add_my_affiliation
+    call after Chunk 1 returned "function not found in schema cache"
+    because we called it with `token` not `p_token`. Set the
+    convention to match: always `p_` on Postgres function params.
+  - **Postgres won't change function return types via CREATE OR
+    REPLACE.** Tried to upgrade `get_profile_by_token` from `json`
+    to `jsonb` in the Chunk 4 migration. Postgres rejected. Stuck
+    with `json` for consistency with Chunk 1.
+  - **VERIFY SCHEMA before writing migrations.** Both
+    program_affiliations and programs already had `deleted_at`
+    columns. Catching that mid-design changed the whole delete
+    semantics (from "typed-confirm friction" to "soft delete is
+    already the answer"). The schema pattern was already there.
+  - **Transient network errors are real.** In-flight WiFi blip
+    during smoke testing produced a "TypeError: Failed to fetch"
+    that looked like a code bug. Wasn't — pure network. Retry
+    worked first try. Added "auto-retry + friendlier error copy"
+    to Chunk 6 polish.
+  
+  Bigger story to capture: this session also surfaced the
+  permissioning model design discussion in 🔴 HIGH. What started
+  as "let's write up the active_invitations design now that we
+  have the pattern" became "wait, the `contacts` table has `true`
+  RLS policies, that's not active_invitations' fault, the whole
+  permissioning model needs a real design." A great example of
+  "session that produces something different than what was planned
+  but more valuable."
 
 - **🌟 The RLS-bypass-views audit (May 12-16).** The crown jewel
   writeup of this week. Real arc: started as a single bug (B1, can't
