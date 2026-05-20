@@ -36,7 +36,12 @@ import sgMail from "@sendgrid/mail";
  */
 
 export const config = {
-  runtime: "edge",
+  // Node.js runtime, NOT edge: the @sendgrid/mail SDK depends on Node
+  // built-ins (fs, path) that the edge runtime doesn't provide. A
+  // magic-link send is invoked occasionally and doesn't stream, so the
+  // edge runtime's advantages (low-latency streaming at scale) don't
+  // apply here anyway — nodejs is the correct choice.
+  runtime: "nodejs",
 };
 
 const FROM_EMAIL = "help@collegemocktrial.org";
