@@ -295,7 +295,7 @@ Let me know if you have any trouble!
 //   - Fonts are a SYSTEM stack. Web fonts do not load in most email clients.
 //   - The logo is a hosted PNG referenced by absolute URL. It is WHITE, so it
 //     only appears inside the maroon header band — never on white.
-//   - The logo has an explicit width (200) and `height:auto` so it keeps its
+//   - The logo has an explicit width (160) and `height:auto` so it keeps its
 //     true aspect ratio whatever the source dimensions are, and an `alt` so
 //     the email still reads if a client blocks images by default.
 //   - The CTA is a real <a> styled as a button. SendGrid click-tracking
@@ -343,8 +343,8 @@ function buildMagicLinkEmailHtml(firstName: string, magicUrl: string): string {
                 style="background-color:${AMTA_MAROON}; padding:28px 24px;">
               <img src="${AMTA_LOGO_URL}"
                    alt="American Mock Trial Association"
-                   width="200"
-                   style="display:block; width:200px; max-width:200px;
+                   width="160"
+                   style="display:block; width:160px; max-width:160px;
                           height:auto; border:0;">
             </td>
           </tr>
