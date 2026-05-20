@@ -1,3 +1,4 @@
+import type { VercelRequest, VercelResponse } from "@vercel/node";
 import { createClient } from "@supabase/supabase-js";
 import sgMail from "@sendgrid/mail";
 
@@ -6,7 +7,7 @@ import sgMail from "@sendgrid/mail";
  *
  * Generates a fresh profile magic-link token for a contact and emails it
  * to them via SendGrid. The admin-facing alternative to copy/pasting the
- * link out of the "Generate magic link" modal.
+ * link out of the "Generate link" modal.
  *
  * Auth: requires a valid Supabase JWT in the Authorization header
  * ("Bearer <token>"). The caller MUST be an admin — unlike contact-summary,
@@ -26,21 +27,24 @@ import sgMail from "@sendgrid/mail";
  *   SUPABASE_SERVICE_ROLE_KEY  — Supabase service role key (privileged work)
  *   SENDGRID_API_KEY           — SendGrid API key (server-only)
  *   PROFILE_LINK_BASE_URL      — Base URL for the profile page, e.g.
- *                                 "https://crm.mocktrial.tech". The magic
- *                                 link is `${base}/profile?token=...`.
+ *                                 "https://crm.mocktrial.tech".
  *
- * NOTE: as of this writing SENDGRID_API_KEY is not yet populated in Vercel
- * (pending SendGrid account access). Until it is, this endpoint will return
- * 500 "Server misconfigured" on the SendGrid step. Everything up to the
- * actual send is testable; the send itself needs the key + verified domain.
+ * RUNTIME NOTE — READ BEFORE EDITING:
+ *   This function uses the Vercel NODE runtime, not the Edge runtime, and
+ *   is therefore shaped DIFFERENTLY from the other api/* functions (which
+ *   are all Edge). Two reasons it must be Node:
+ *     1. @sendgrid/mail depends on Node built-ins (fs, path) the Edge
+ *        runtime doesn't provide.
+ *   Node-runtime handlers receive Express-style (req, res) objects — NOT
+ *   the Web-standard Request/Response that Edge handlers get. So:
+ *     - read headers as `req.headers.authorization` (a plain object),
+ *       NOT `request.headers.get(...)`
+ *     - read the body as `req.body` (already parsed by Vercel)
+ *     - send responses with `res.status(n).json(...)`, NOT `return new Response(...)`
+ *   Do not "simplify" this to match the Edge functions — it will break.
  */
 
 export const config = {
-  // Node.js runtime, NOT edge: the @sendgrid/mail SDK depends on Node
-  // built-ins (fs, path) that the edge runtime doesn't provide. A
-  // magic-link send is invoked occasionally and doesn't stream, so the
-  // edge runtime's advantages (low-latency streaming at scale) don't
-  // apply here anyway — nodejs is the correct choice.
   runtime: "nodejs",
 };
 
@@ -84,31 +88,39 @@ function getProfileLinkBaseUrl(): string {
 }
 
 // -----------------------------------------------------------------------------
-// Main handler
+// Main handler — Node runtime: (req, res) signature
 // -----------------------------------------------------------------------------
 
-export default async function handler(request: Request): Promise<Response> {
-  if (request.method !== "POST") {
-    return jsonError(405, "Method not allowed. Use POST.");
+export default async function handler(
+  req: VercelRequest,
+  res: VercelResponse,
+): Promise<void> {
+  // Discourage caching on every response path.
+  res.setHeader("Cache-Control", "no-store");
+
+  if (req.method !== "POST") {
+    res.status(405).json({ error: "Method not allowed. Use POST." });
+    return;
   }
 
   // ---- 1. Auth header present ----------------------------------------------
-  const authHeader = request.headers.get("authorization");
+  // Node runtime: headers is a plain object, keys lower-cased by Node.
+  const authHeader = req.headers.authorization;
   if (!authHeader || !authHeader.startsWith("Bearer ")) {
-    return jsonError(401, "Missing or malformed Authorization header.");
+    res.status(401).json({ error: "Missing or malformed Authorization header." });
+    return;
   }
 
   // ---- 2. Parse + validate body --------------------------------------------
-  let contactId: string;
-  try {
-    const body = (await request.json()) as { contact_id?: unknown };
-    if (typeof body.contact_id !== "string" || !body.contact_id) {
-      return jsonError(400, "Request body must include 'contact_id' (string).");
-    }
-    contactId = body.contact_id;
-  } catch {
-    return jsonError(400, "Request body must be valid JSON.");
+  // Node runtime: Vercel has already parsed JSON bodies into req.body.
+  const body = req.body as { contact_id?: unknown } | undefined;
+  if (!body || typeof body.contact_id !== "string" || !body.contact_id) {
+    res.status(400).json({
+      error: "Request body must include 'contact_id' (string).",
+    });
+    return;
   }
+  const contactId = body.contact_id;
 
   // ---- 3. Initialize clients -----------------------------------------------
   let anonClient;
@@ -117,14 +129,18 @@ export default async function handler(request: Request): Promise<Response> {
     anonClient = getAnonClient();
     serviceClient = getServiceClient();
   } catch (e) {
-    return jsonError(500, "Server misconfigured: " + (e as Error).message);
+    res.status(500).json({
+      error: "Server misconfigured: " + (e as Error).message,
+    });
+    return;
   }
 
   // ---- 4. Verify the JWT identifies a real user ----------------------------
   const token = authHeader.slice("Bearer ".length);
   const { data: userData, error: userErr } = await anonClient.auth.getUser(token);
   if (userErr || !userData?.user) {
-    return jsonError(401, "Invalid or expired session.");
+    res.status(401).json({ error: "Invalid or expired session." });
+    return;
   }
   const callerAuthUserId = userData.user.id;
 
@@ -140,13 +156,15 @@ export default async function handler(request: Request): Promise<Response> {
     .maybeSingle();
 
   if (callerErr) {
-    return jsonError(500, "Could not verify caller permissions.");
+    res.status(500).json({ error: "Could not verify caller permissions." });
+    return;
   }
   if (!callerContact || callerContact.is_admin !== true) {
-    return jsonError(
-      403,
-      "Only admins can send profile links. If you believe this is an error, contact an AMTA administrator.",
-    );
+    res.status(403).json({
+      error:
+        "Only admins can send profile links. If you believe this is an error, contact an AMTA administrator.",
+    });
+    return;
   }
 
   // ---- 6. Load the target contact ------------------------------------------
@@ -158,16 +176,19 @@ export default async function handler(request: Request): Promise<Response> {
     .maybeSingle();
 
   if (targetErr) {
-    return jsonError(500, "Database error loading the target contact.");
+    res.status(500).json({ error: "Database error loading the target contact." });
+    return;
   }
   if (!targetContact) {
-    return jsonError(404, "That contact could not be found.");
+    res.status(404).json({ error: "That contact could not be found." });
+    return;
   }
   if (!targetContact.email) {
-    return jsonError(
-      422,
-      "That contact has no email address on file, so there's nowhere to send the link.",
-    );
+    res.status(422).json({
+      error:
+        "That contact has no email address on file, so there's nowhere to send the link.",
+    });
+    return;
   }
 
   // ---- 7. Mint a fresh magic-link token ------------------------------------
@@ -183,10 +204,12 @@ export default async function handler(request: Request): Promise<Response> {
   );
 
   if (mintErr) {
-    return jsonError(500, "Could not generate a new profile link.");
+    res.status(500).json({ error: "Could not generate a new profile link." });
+    return;
   }
   if (typeof newToken !== "string" || !newToken) {
-    return jsonError(500, "Token mint returned an unexpected result.");
+    res.status(500).json({ error: "Token mint returned an unexpected result." });
+    return;
   }
 
   // ---- 8. Build the magic-link URL -----------------------------------------
@@ -194,7 +217,10 @@ export default async function handler(request: Request): Promise<Response> {
   try {
     magicUrl = `${getProfileLinkBaseUrl()}/profile?token=${newToken}`;
   } catch (e) {
-    return jsonError(500, "Server misconfigured: " + (e as Error).message);
+    res.status(500).json({
+      error: "Server misconfigured: " + (e as Error).message,
+    });
+    return;
   }
 
   // ---- 9. Send the email via SendGrid --------------------------------------
@@ -203,7 +229,10 @@ export default async function handler(request: Request): Promise<Response> {
     sg = getSendGrid();
   } catch (e) {
     // SENDGRID_API_KEY not yet set — see file header note.
-    return jsonError(500, "Server misconfigured: " + (e as Error).message);
+    res.status(500).json({
+      error: "Server misconfigured: " + (e as Error).message,
+    });
+    return;
   }
 
   const firstName = targetContact.first_name || "there";
@@ -222,16 +251,11 @@ export default async function handler(request: Request): Promise<Response> {
       (e as any)?.response?.body?.errors?.[0]?.message ??
       (e as Error).message ??
       "SendGrid send failed";
-    return jsonError(502, "Email service error: " + msg);
+    res.status(502).json({ error: "Email service error: " + msg });
+    return;
   }
 
-  return new Response(
-    JSON.stringify({ ok: true, sent_to: targetContact.email }),
-    {
-      status: 200,
-      headers: { "Content-Type": "application/json", "Cache-Control": "no-store" },
-    },
-  );
+  res.status(200).json({ ok: true, sent_to: targetContact.email });
 }
 
 // -----------------------------------------------------------------------------
@@ -251,15 +275,4 @@ The link is good for 30 days and refreshes whenever you save changes. Just click
 Let me know if you have any trouble!
 
 — AMTA`;
-}
-
-// -----------------------------------------------------------------------------
-// Helpers
-// -----------------------------------------------------------------------------
-
-function jsonError(status: number, message: string): Response {
-  return new Response(JSON.stringify({ error: message }), {
-    status,
-    headers: { "Content-Type": "application/json", "Cache-Control": "no-store" },
-  });
 }
