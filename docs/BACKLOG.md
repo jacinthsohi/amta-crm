@@ -13,15 +13,17 @@ handoff docs.
 - 💭 DESIGN DISCUSSIONS — open product questions, no clear shape yet
 - ✅ SHIPPED — done, kept here for momentum / portfolio context
 
-Last updated: May 17, 2026 — Email magic-link send shipped (backend + UI, SendGrid-gated finish remaining)
+Last updated: May 20, 2026 — Email magic-link send fully shipped & verified in prod (SendGrid live, branded HTML email)
 
 ---
 
 ## ✅ Recently shipped
 
-- **📧 Email automation: profile magic-link send (backend + UI)**
-  (May 17, 2026) — Admins can email a profile magic link to a
-  contact directly from the CRM instead of copy/pasting from Gmail.
+- **📧 Email automation: profile magic-link send — FULLY SHIPPED**
+  (May 17 backend/UI; SendGrid turned on + branded HTML May 20) —
+  Admins email a profile magic link to a contact directly from the
+  CRM instead of copy/pasting from Gmail. Verified end to end in
+  prod: real email sends, lands in inbox.
   - `api/send-magic-link.ts` — Vercel serverless function. Verifies
     the caller's JWT identifies a real user, THEN verifies that
     user is an admin (`contacts.is_admin`) before doing privileged
@@ -39,14 +41,18 @@ Last updated: May 17, 2026 — Email magic-link send shipped (backend + UI, Send
     variant with NO `is_current_user_admin()` gate, since
     service-role callers have no `auth.uid()`. Its safety is the
     REVOKE: never granted to anon/authenticated.
-  - **NOT yet functional end to end — SendGrid-gated.** The whole
-    chain is verified working in prod *except* the actual email
-    send: `SENDGRID_API_KEY` is not set in Vercel (pending account
-    access) and the sending domain isn't authenticated yet. See
-    the "SendGrid-gated finish" item in 🔴 HIGH for the remaining
-    ~15-minute task. Until then, clicking the button mints a token
-    and returns a clean "Server misconfigured: SENDGRID_API_KEY is
-    not set" — proof the rest of the chain works.
+  - SendGrid (May 20): domain `collegemocktrial.org` was already
+    authenticated; created a Custom Access API key scoped to Mail
+    Send only (least privilege); set `SENDGRID_API_KEY` +
+    `PROFILE_LINK_BASE_URL` in Vercel. From-address is
+    `amta@collegemocktrial.org` (see the 🟢 LOW help@ swap item).
+  - Branded HTML email (May 20): `send-magic-link.ts` sends both a
+    plain-text body and a branded HTML body — light gray wrapper,
+    white card, maroon header band with the white AMTA logo,
+    system fonts, a maroon "Update My Profile" button. The button
+    label stays clean even after SendGrid rewrites the href for
+    click tracking. Logo is the hosted white PNG on
+    collegemocktrial.org, 160px wide.
 
 - **🔗 Profile V1: magic-link self-service profile editor**
   (May 16, 2026) — Six SECURITY DEFINER RPCs let board members
@@ -101,25 +107,6 @@ Last updated: May 17, 2026 — Email magic-link send shipped (backend + UI, Send
 ---
 
 ## 🔴 HIGH
-
-- **📧 SendGrid-gated finish: turn on the magic-link email send.**
-  The backend + UI for emailing profile magic links shipped May 17
-  (see ✅ Recently shipped). Everything works in prod except the
-  actual SendGrid send. Remaining steps, ~15 minutes once SendGrid
-  account access is in hand:
-  1. **Authenticate the `collegemocktrial.org` domain in SendGrid**
-     (Sender Authentication → SPF / DKIM / DMARC). Add the DNS
-     records SendGrid provides at the domain's DNS host. Required —
-     without it, emails land in spam. This is the slow step (DNS
-     propagation can take minutes to hours).
-  2. **Add `SENDGRID_API_KEY` to Vercel** env vars (Production).
-  3. **Redeploy** — env var changes don't apply to existing
-     deployments.
-  4. Click "Email link directly" on a contact, confirm a real
-     email arrives, and verify it lands in Inbox (not Spam /
-     Promotions).
-  Note: `PROFILE_LINK_BASE_URL` is already set in Vercel
-  (`https://crm.mocktrial.tech`) — done May 17.
 
 - **Email automation for invitations.** Currently copy/paste manual.
   SEPARATE from the magic-link send shipped May 17 — that covered
@@ -426,12 +413,18 @@ Last updated: May 17, 2026 — Email magic-link send shipped (backend + UI, Send
 
 - **Email Draft Generator.** Potential 6th AI feature.
 
-- **Branded HTML email template (email v2).** The May 17 magic-link
-  send uses plain text. A simple branded wrapper (AMTA logo, maroon
-  header, footer) would make transactional emails look more
-  legitimate and improve deliverability slightly. Deferred
-  deliberately from the v1 email work. Applies to both the
-  magic-link email and the invitation email once that ships.
+- **Branded HTML email — extend to the invitation email + extract a
+  shared wrapper.** The magic-link email got its branded HTML
+  treatment May 20 (maroon header, white logo, button — see ✅
+  Recently shipped). But the HTML is currently inlined in
+  `api/send-magic-link.ts`. When the invitation email gets built,
+  it should use the same branded shell — at which point it's worth
+  extracting the HTML wrapper into a shared helper (e.g.
+  `api/_email-template.ts`) so the two functions don't duplicate
+  ~100 lines of table-based markup. Until the invitation email
+  exists there's only one caller, so the extraction can wait
+  (rule of three). The current design is deliberately barebones —
+  fancier layout is possible later but not needed.
 
 - **Profile V1 polish (Chunk 6 leftovers).** Deferred from the May
   16 build session because polish is most valuable closer to launch
@@ -642,18 +635,34 @@ Last updated: May 17, 2026 — Email magic-link send shipped (backend + UI, Send
 - **Navigator.locks bug writeup.**
 - **AI summary staleness.**
 - **Case file DB feature.**
+- **Re-evaluate SendGrid click tracking on transactional emails.**
+  Click tracking is ON (account-wide; AMTA uses SendGrid for other
+  things, so it stays for now). Downside for transactional email:
+  it rewrites the link to a `url####.collegemocktrial.org/ls/click`
+  redirect. In a *plain-text* email that looks like a phishing URL.
+  The branded HTML email (shipped May 20) sidesteps this — the link
+  is a labeled "Update My Profile" button, so the recipient never
+  sees the raw rewritten URL. So this is genuinely low-stakes now;
+  re-evaluate only if AMTA ever stops using SendGrid for marketing,
+  or if the plain-text fallback's rewritten link becomes a
+  complaint.
 
 ---
 
 ## 📋 To write up
 
-- **📧 Email automation: magic-link send (May 17).** Half-day
-  session, executed the "option 2" plan from the May 16 handoff —
-  do all the email work that DIDN'T need SendGrid account access,
-  since access was pending. Shipped the entire backend + UI for
-  emailing profile magic links; only the live SendGrid send
-  remains, gated on account access.
-  
+- **📧 Email automation: magic-link send (May 17 + May 20).** Two
+  half-day sessions. May 17: executed the "option 2" plan from the
+  May 16 handoff — do all the email work that DIDN'T need SendGrid
+  account access, since access was pending. Shipped the entire
+  backend + UI for emailing profile magic links, leaving only the
+  live SendGrid send gated on account access. May 20: SendGrid
+  access arrived — turned on the send (domain was already
+  authenticated; made a Mail-Send-scoped API key; set the Vercel
+  env vars), debugged it to a working state, then added a branded
+  HTML email (maroon header, white logo, button). Feature is now
+  fully shipped and verified in prod.
+
   The arc:
   - Started blocked: SendGrid account confirmed to exist, but
     Jacinth couldn't log in yet. Chose to build everything up to
