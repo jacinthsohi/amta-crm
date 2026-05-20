@@ -274,11 +274,40 @@ Last updated: May 16, 2026 — Profile V1 shipped (magic-link self-service); per
 
 - **Tighten `alumni_claims` RLS to admin-only.**
 
-- **Combobox UX for the program dropdown on `/alumni-signup`.**
-  *Profile V1 (May 16) shipped a reusable `ProgramCombobox`
-  component (`src/features/profile/ProgramCombobox.tsx`) backed by
-  the public `search_programs_public` RPC. Adopting it on
-  /alumni-signup is mostly a swap-out + RPC GRANT verification.*
+- **Unify the program picker UX across the app.**
+  Three places currently pick programs and they're inconsistent:
+  - `/profile` self-service edit (✅ uses the new ProgramCombobox)
+  - `/alumni-signup` (uses an older long alphabetical dropdown)
+  - Admin ContactDetailPage `ProgramAffiliationForm` modal (uses
+    an older long alphabetical dropdown — see screenshot Jacinth
+    flagged May 16)
+
+  The UX problem: 483 programs in a browser-native `<select>` is
+  brutal to navigate. The new ProgramCombobox (debounced search,
+  keyboard nav, inactive-program markers) is meaningfully better
+  and already exists in
+  `src/features/profile/ProgramCombobox.tsx`.
+
+  **Design question to resolve first:** ProgramCombobox is currently
+  backed by the public `search_programs_public` RPC (anon/authed).
+  Admin contexts could either:
+  - **Reuse the public RPC** (simplest, no new code, returns the
+    same shape) — fine if admin needs nothing more than name/city/
+    state/short_name/status.
+  - **Build an admin variant** (e.g. `search_programs_admin`)
+    that returns additional fields admins care about — website,
+    joined_year, notes preview, etc. More work but cleaner
+    separation if admin UI ever diverges from the public picker.
+
+  Recommended: start with reusing the public RPC. If admin UI
+  ever needs more, add the variant then.
+
+  Implementation: swap the two old-style `<select>` blocks for
+  the ProgramCombobox component. Verify RPC GRANTs allow the
+  authed admin context (currently GRANTed to anon + authenticated,
+  so should Just Work). Smoke test both flows.
+
+  Estimated 30-45 min for both sites + smoke testing.
 
 - **Expand alumni signup form fields (remaining candidates).** After
   location + .edu shipped May 15, remaining alumni form expansion:
