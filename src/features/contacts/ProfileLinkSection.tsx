@@ -1,19 +1,21 @@
 import { useState } from "react";
 import { useMutation } from "@tanstack/react-query";
-import { Link2, Copy, Mail, Check, X } from "lucide-react";
+import { Link2, Copy, Mail, Check, X, Send, AlertCircle } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 
 /**
- * Profile self-service action: generates a magic-link URL the contact can
- * use to edit their own profile. Lives in the sidebar of the admin
- * ContactDetailPage as a compact action — it's used rarely (admin onboards
- * a contact, contact lost their email, etc.), and the people clicking it
- * already know what it does, so we keep the surface area minimal.
+ * Profile self-service actions for the admin ContactDetailPage sidebar.
  *
- * Each click revokes any prior active tokens for the contact and issues
- * a fresh one (handled server-side by create_profile_token, see Chunk 5
- * migration). The result modal lets the admin copy the URL or hand it off
- * to their default email client.
+ * Two buttons, two distinct flows:
+ *   1. "Generate link" — opens a modal showing the URL with a copy button
+ *      and a "Compose email" mailto fallback. For when the admin wants to
+ *      hand off the link themselves (or SendGrid is down).
+ *   2. "Email link directly" — no modal; calls /api/send-magic-link, which
+ *      mints a fresh token server-side and emails it to the contact via
+ *      SendGrid. One click, done.
+ *
+ * Both ultimately mint a token via the same DB logic (_mint_profile_token);
+ * each click revokes the contact's prior active token.
  */
 export function ProfileLinkSection({
   contactId,
@@ -27,6 +29,7 @@ export function ProfileLinkSection({
   const [modalOpen, setModalOpen] = useState(false);
   const [generatedUrl, setGeneratedUrl] = useState<string | null>(null);
 
+  // ---- Flow 1: generate a link and open the modal --------------------------
   const generate = useMutation({
     mutationFn: async (): Promise<string> => {
       const { data, error } = await supabase.rpc("create_profile_token", {
@@ -42,23 +45,125 @@ export function ProfileLinkSection({
     },
   });
 
+  // ---- Flow 2: email the link directly via the server ----------------------
+  const emailDirect = useMutation({
+    mutationFn: async (): Promise<string> => {
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
+      if (!session) {
+        throw new Error("Not signed in. Please refresh the page.");
+      }
+
+      const res = await fetch(`/api/send-magic-link?t=${Date.now()}`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${session.access_token}`,
+        },
+        body: JSON.stringify({ contact_id: contactId }),
+      });
+
+      if (!res.ok) {
+        let msg = `Request failed (${res.status})`;
+        try {
+          const errJson = await res.json();
+          if (errJson?.error) msg = errJson.error;
+        } catch {
+          // Response wasn't JSON; keep the generic message.
+        }
+        throw new Error(msg);
+      }
+
+      const body = (await res.json()) as { sent_to?: string };
+      return body.sent_to ?? contactEmail ?? "the contact";
+    },
+  });
+
+  // Auto-clear the "sent" confirmation after a few seconds so the button
+  // returns to its normal state.
+  function handleEmailDirect() {
+    emailDirect.mutate(undefined, {
+      onSuccess: () => {
+        setTimeout(() => emailDirect.reset(), 5000);
+      },
+    });
+  }
+
+  const noEmail = !contactEmail;
+
   return (
     <>
       <div>
         <h3 className="text-[11px] font-semibold tracking-wide uppercase text-zinc-500 mb-2.5">
           Profile self-service
         </h3>
-        <button
-          onClick={() => generate.mutate()}
-          disabled={generate.isPending}
-          className="flex items-center gap-1.5 text-xs px-2.5 py-1.5 rounded-md text-zinc-700 border border-zinc-200 bg-white hover:bg-zinc-50 transition-colors disabled:opacity-50"
-        >
-          <Link2 size={12} />
-          {generate.isPending ? "Generating…" : "Generate magic link"}
-        </button>
+
+        <div className="flex flex-col gap-2">
+          {/* Flow 1: generate + modal */}
+          <button
+            onClick={() => generate.mutate()}
+            disabled={generate.isPending}
+            className="flex items-center gap-1.5 text-xs px-2.5 py-1.5 rounded-md text-zinc-700 border border-zinc-200 bg-white hover:bg-zinc-50 transition-colors disabled:opacity-50"
+          >
+            <Link2 size={12} />
+            {generate.isPending ? "Generating…" : "Generate link"}
+          </button>
+
+          {/* Flow 2: email directly */}
+          <button
+            onClick={handleEmailDirect}
+            disabled={emailDirect.isPending || noEmail}
+            title={
+              noEmail
+                ? "This contact has no email address on file"
+                : `Email a magic link to ${contactFirstName}`
+            }
+            className={`flex items-center gap-1.5 text-xs px-2.5 py-1.5 rounded-md border transition-colors disabled:opacity-50 ${
+              emailDirect.isSuccess
+                ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+                : "border-zinc-200 bg-white text-zinc-700 hover:bg-zinc-50"
+            }`}
+          >
+            {emailDirect.isSuccess ? (
+              <>
+                <Check size={12} />
+                Emailed
+              </>
+            ) : emailDirect.isPending ? (
+              <>
+                <Send size={12} />
+                Sending…
+              </>
+            ) : (
+              <>
+                <Send size={12} />
+                Email link directly
+              </>
+            )}
+          </button>
+        </div>
+
+        {/* Inline status messaging below the buttons */}
+        {noEmail && (
+          <div className="mt-2 text-xs text-zinc-400">
+            No email on file — add one to email a link.
+          </div>
+        )}
         {generate.error && (
           <div className="mt-2 text-xs text-red-700">
             {generate.error.message}
+          </div>
+        )}
+        {emailDirect.isSuccess && (
+          <div className="mt-2 text-xs text-emerald-700">
+            Link emailed to {emailDirect.data}.
+          </div>
+        )}
+        {emailDirect.error && (
+          <div className="mt-2 flex items-start gap-1 text-xs text-red-700">
+            <AlertCircle size={12} className="mt-0.5 shrink-0" />
+            <span>{emailDirect.error.message}</span>
           </div>
         )}
       </div>
@@ -208,7 +313,8 @@ Let me know if you have any trouble!
 
         <p className="mt-4 text-xs text-zinc-400">
           Tip: the "Compose email" button opens a draft in your default mail
-          app. You can edit it before sending.
+          app. You can edit it before sending. To have AMTA send the email
+          for you instead, use "Email link directly" on the contact page.
         </p>
       </div>
     </div>
