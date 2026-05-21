@@ -13,7 +13,7 @@ handoff docs.
 - 💭 DESIGN DISCUSSIONS — open product questions, no clear shape yet
 - ✅ SHIPPED — done, kept here for momentum / portfolio context
 
-Last updated: May 21, 2026 — Invitation email flow shipped; email automation complete
+Last updated: May 21, 2026 — Invitation email shipped; permissioning model design resolved (docs/permissioning-model.md)
 
 ---
 
@@ -132,6 +132,16 @@ Last updated: May 21, 2026 — Invitation email flow shipped; email automation c
   internal users + external token-gated users.** Surfaced May 16 while
   scoping the active_invitations RLS work (Profile V1 session).
   Currently load-bearing for several other backlog items.
+
+  > **STATUS (May 21): DESIGN RESOLVED.** The design is now settled
+  > and written up in `docs/permissioning-model.md` — four roles
+  > (Super Admin / Admin / Internal User / External), an
+  > `internal_role` enum on `contacts`, nested role-check functions,
+  > and a five-phase migration plan. The text below is the original
+  > May 16 brief, kept as the history the doc was built from; the
+  > doc supersedes it. Remaining work is IMPLEMENTATION — phased,
+  > starting with Phase 0 (additive, zero-behavior-change). See the
+  > doc for the phase breakdown.
 
   **Current state (placeholder, not bug):**
   - `is_current_user_admin()` is a binary — you're either an admin or
@@ -257,7 +267,16 @@ Last updated: May 21, 2026 — Invitation email flow shipped; email automation c
 - **🔒 SECURITY: RLS audit Tier 2/3 — close bypass on remaining ~19
   active_* views.** Tier 1 (AI views) shipped May 16. Tier 2/3 covers
   views over data with admin-only RLS, plus lower-risk operational
-  data. Each view needs:
+  data.
+
+  > **UNBLOCKED (May 21):** this was waiting on the permissioning
+  > model — the policies these views invoke were placeholders, so
+  > a "fix" would just enforce permissive logic. The model is now
+  > designed (`docs/permissioning-model.md`). This audit should be
+  > done as / alongside permissioning Phase 2–3, enforcing against
+  > the real role model. Don't do it standalone before then.
+
+  Each view needs:
   - Full column list verified against base table via pg_get_viewdef
     or information_schema (NEVER from memory — lessons from May 13)
   - DROP + CREATE with `WITH (security_invoker = true)`
@@ -628,6 +647,18 @@ Last updated: May 21, 2026 — Invitation email flow shipped; email automation c
   the shape: the endpoint authorizes, a service-role RPC does the
   work. Options 1 and 3 are no longer far apart now that there's a
   working serverless-function precedent.
+
+  **Update (May 21):** the permissioning model is now designed
+  (`docs/permissioning-model.md`), so the blocker noted in the
+  May 16 update is resolved. Importantly, the doc's **Phase 1
+  already covers the accept-invitation linkage step** — converting
+  the direct `contacts.auth_user_id` write into a SECURITY DEFINER
+  RPC, gated before any `contacts`-policy tightening. So that
+  specific piece of the invitations refactor now lives in the
+  permissioning plan. What remains under THIS entry is the public
+  read-by-token surface (options 1 vs 3 above). Design it against
+  the four-role model; coordinate with permissioning Phase 1 so
+  the two don't build overlapping RPCs.
   
   **Blocks:** the Tier 1 RLS audit from being fully complete. The
   invitations views are the only Tier 1 views not yet fixed.
