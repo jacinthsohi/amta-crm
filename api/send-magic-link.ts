@@ -1,6 +1,9 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
 import { createClient } from "@supabase/supabase-js";
 import sgMail from "@sendgrid/mail";
+// THROWAWAY — bundle test. Verifies Vercel resolves an api/ -> src/lib import
+// at runtime. Remove this import and the console.log below once confirmed.
+import { bundleTest } from "../src/lib/_bundle-test";
 
 /**
  * POST /api/send-magic-link
@@ -105,6 +108,11 @@ export default async function handler(
 ): Promise<void> {
   // Discourage caching on every response path.
   res.setHeader("Cache-Control", "no-store");
+
+  // THROWAWAY — bundle test. If this logs "[bundle-test] ok" in the Vercel
+  // function log, api/ -> src/lib imports resolve at runtime. Remove this
+  // line and the import above once confirmed.
+  console.log("[bundle-test]", bundleTest());
 
   if (req.method !== "POST") {
     res.status(405).json({ error: "Method not allowed. Use POST." });
