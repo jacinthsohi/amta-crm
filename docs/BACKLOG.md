@@ -13,11 +13,43 @@ handoff docs.
 - 💭 DESIGN DISCUSSIONS — open product questions, no clear shape yet
 - ✅ SHIPPED — done, kept here for momentum / portfolio context
 
-Last updated: May 21, 2026 — Invitation email shipped; permissioning model design resolved (docs/permissioning-model.md)
+Last updated: May 21, 2026 — Invitation email, permissioning design + Phase 0, and program picker unification all shipped
 
 ---
 
 ## ✅ Recently shipped
+
+- **Unify the program picker UX — SHIPPED** (May 21, 2026) — the
+  shared `ProgramCombobox` (debounced search, keyboard nav,
+  inactive-program markers) now replaces the old plain `<select>`
+  over all ~483 programs in `AlumniSignupPage` and
+  `ProgramAffiliationForm`. All three program-picking spots
+  (`/profile`, `/alumni-signup`, the admin affiliation modal) are
+  now consistent. Reused the public `search_programs_public` RPC
+  (granted to anon + authenticated, so it works in the admin
+  context). `AlumniSignupPage` dropped its upfront `active_programs`
+  fetch; `ProgramAffiliationForm` resolves the program name from
+  `useProgramsLookup` for the combobox's closed-state label.
+
+- **🔒 Permissioning model — Phase 0 SHIPPED** (May 21, 2026) —
+  first phase of the permissioning model (`docs/permissioning-model.md`).
+  Purely additive, zero behavior change: added the `internal_role`
+  enum + column, refreshed the `active_contacts` view to expose it,
+  backfilled the one active admin to `super_admin`, added
+  `is_current_user_super_admin()` / `is_current_user_internal()`,
+  and redefined `is_current_user_admin()` to the nested "at least
+  Admin" form. The 6 existing RLS policies are unaffected. Forward +
+  rollback tested against Postgres 16 before applying. Next:
+  Phase 1 (accept-invitation → SECURITY DEFINER RPC).
+  - LESSON captured: `active_contacts` is an explicit-column view,
+    so a new `contacts` column must be appended to the view too,
+    and a view-shrinking rollback needs `DROP + CREATE` (not
+    `CREATE OR REPLACE`, which cannot remove columns).
+
+- **Note (May 21): "Bring location to admin ContactForm" was found
+  already done** and removed from 🟡 MEDIUM — `ContactForm.tsx`
+  already has `current_city` / `current_state` create+edit. The
+  backlog item was stale.
 
 - **📧 Email automation: invitation emails — SHIPPED** (May 21,
   2026) — `/admin/invitations` now actually emails invitations.
@@ -342,12 +374,6 @@ Last updated: May 21, 2026 — Invitation email shipped; permissioning model des
 - **Admin data-cleanup / dupe-merge tool.** Now needs to dedup across
   primary AND secondary email.
 
-- **Bring location to admin ContactForm.** Part 2 of the alumni-form
-  location work. Add `current_city` + `current_state` editing to the
-  admin ContactForm so admins can update existing contacts. Without
-  this, location data only enters via new alumni signups and goes
-  stale forever. ~20 min.
-
 - **External judge signup flow.**
 
 - **Mapping UX polish — show first-row preview next to each dropdown.**
@@ -355,41 +381,6 @@ Last updated: May 21, 2026 — Invitation email shipped; permissioning model des
 - **README update for CSV import.** ~30 min.
 
 - **Tighten `alumni_claims` RLS to admin-only.**
-
-- **Unify the program picker UX across the app.**
-  Three places currently pick programs and they're inconsistent:
-  - `/profile` self-service edit (✅ uses the new ProgramCombobox)
-  - `/alumni-signup` (uses an older long alphabetical dropdown)
-  - Admin ContactDetailPage `ProgramAffiliationForm` modal (uses
-    an older long alphabetical dropdown — see screenshot Jacinth
-    flagged May 16)
-
-  The UX problem: 483 programs in a browser-native `<select>` is
-  brutal to navigate. The new ProgramCombobox (debounced search,
-  keyboard nav, inactive-program markers) is meaningfully better
-  and already exists in
-  `src/features/profile/ProgramCombobox.tsx`.
-
-  **Design question to resolve first:** ProgramCombobox is currently
-  backed by the public `search_programs_public` RPC (anon/authed).
-  Admin contexts could either:
-  - **Reuse the public RPC** (simplest, no new code, returns the
-    same shape) — fine if admin needs nothing more than name/city/
-    state/short_name/status.
-  - **Build an admin variant** (e.g. `search_programs_admin`)
-    that returns additional fields admins care about — website,
-    joined_year, notes preview, etc. More work but cleaner
-    separation if admin UI ever diverges from the public picker.
-
-  Recommended: start with reusing the public RPC. If admin UI
-  ever needs more, add the variant then.
-
-  Implementation: swap the two old-style `<select>` blocks for
-  the ProgramCombobox component. Verify RPC GRANTs allow the
-  authed admin context (currently GRANTed to anon + authenticated,
-  so should Just Work). Smoke test both flows.
-
-  Estimated 30-45 min for both sites + smoke testing.
 
 - **Expand alumni signup form fields (remaining candidates).** After
   location + .edu shipped May 15, remaining alumni form expansion:
