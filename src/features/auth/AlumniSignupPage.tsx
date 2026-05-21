@@ -1,9 +1,9 @@
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import { Link } from "react-router-dom";
 import { supabase } from "@/lib/supabase";
 import { useAuth } from "@/lib/auth";
-import type { Program } from "@/lib/database.types";
 import { STATE_OPTIONS_FOR_DROPDOWN } from "@/lib/us-states";
+import { ProgramCombobox, type ProgramOption } from "@/features/profile/ProgramCombobox";
 
 /**
  * Public alumni signup form (no auth required).
@@ -31,13 +31,13 @@ import { STATE_OPTIONS_FOR_DROPDOWN } from "@/lib/us-states";
  *   - Primary email cannot end in `.edu`. School emails get deactivated
  *     after graduation, so they make poor primary contacts for records
  *     meant to survive long-term. Secondary email is exempt.
+ *
+ * Program picker: uses the shared ProgramCombobox (debounced search via the
+ * search_programs_public RPC). Replaced the old plain <select> over the full
+ * ~483-program list, which was brutal to navigate.
  */
 export default function AlumniSignupPage() {
   const { session, signOut } = useAuth();
-
-  const [programs, setPrograms] = useState<Program[] | null>(null);
-  const [loadingPrograms, setLoadingPrograms] = useState(true);
-  const [programError, setProgramError] = useState<string | null>(null);
 
   // Form state
   const [firstName, setFirstName] = useState("");
@@ -45,7 +45,11 @@ export default function AlumniSignupPage() {
   const [email, setEmail] = useState("");
   const [secondaryEmail, setSecondaryEmail] = useState("");
   const [graduationYear, setGraduationYear] = useState("");
+  // Program: the combobox hands back a full ProgramOption. We keep the id
+  // (for the alumni_claims insert) and the name (so the closed combobox can
+  // display the selection — it needs selectedLabel).
   const [programId, setProgramId] = useState("");
+  const [programName, setProgramName] = useState<string | null>(null);
   const [phone, setPhone] = useState("");
   const [currentCity, setCurrentCity] = useState("");
   const [currentState, setCurrentState] = useState("");
@@ -56,38 +60,6 @@ export default function AlumniSignupPage() {
   const [submitting, setSubmitting] = useState(false);
   const [submitted, setSubmitted] = useState(false);
   const [error, setError] = useState<string | null>(null);
-
-  // Load programs for the dropdown. Skip the fetch when signed in — we're
-  // rendering the signed-in redirect view instead and don't need the list.
-  useEffect(() => {
-    if (session) {
-      setLoadingPrograms(false);
-      return;
-    }
-    let cancelled = false;
-    (async () => {
-      try {
-        const { data, error } = await supabase
-          .from("active_programs")
-          .select("id, name, short_name")
-          .order("name");
-        if (cancelled) return;
-        if (error) {
-          setProgramError(
-            "Couldn't load the program list. Please refresh and try again.",
-          );
-          console.error("Failed to load programs:", error);
-        } else {
-          setPrograms((data ?? []) as Program[]);
-        }
-      } finally {
-        if (!cancelled) setLoadingPrograms(false);
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [session]);
 
   // -----------------------------------------------------------------------
   // Signed-in redirect view
@@ -343,28 +315,22 @@ export default function AlumniSignupPage() {
               />
             </FormField>
 
+            {/*
+              Program picker — shared ProgramCombobox. Debounced search over
+              the search_programs_public RPC; far better than a 483-item
+              <select>. We store id (for the insert) and name (for the
+              closed-state display via selectedLabel).
+            */}
             <FormField label="Program (school)" required>
-              {loadingPrograms ? (
-                <div className="text-xs text-zinc-500 py-2">
-                  Loading program list…
-                </div>
-              ) : programError ? (
-                <div className="text-xs text-red-600 py-2">{programError}</div>
-              ) : (
-                <select
-                  value={programId}
-                  onChange={(e) => setProgramId(e.target.value)}
-                  className="form-input"
-                  required
-                >
-                  <option value="">Select your school…</option>
-                  {(programs ?? []).map((p) => (
-                    <option key={p.id} value={p.id}>
-                      {p.name}
-                    </option>
-                  ))}
-                </select>
-              )}
+              <ProgramCombobox
+                value={programId || null}
+                selectedLabel={programName}
+                placeholder="Search for your school…"
+                onChange={(p: ProgramOption) => {
+                  setProgramId(p.id);
+                  setProgramName(p.name);
+                }}
+              />
               <p className="text-[11px] text-zinc-500 mt-1">
                 Don't see your school? Email us — we may need to add it first.
               </p>
@@ -431,7 +397,7 @@ export default function AlumniSignupPage() {
 
             <button
               type="submit"
-              disabled={submitting || loadingPrograms}
+              disabled={submitting}
               className="w-full bg-maroon-700 text-white text-sm font-medium px-4 py-2.5 rounded-md hover:bg-maroon-800 disabled:opacity-60 disabled:cursor-not-allowed transition-colors"
             >
               {submitting ? "Submitting…" : "Submit request"}

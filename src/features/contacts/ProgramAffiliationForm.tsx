@@ -1,13 +1,14 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { SidePanel } from "@/components/SidePanel";
 import { FieldGroup } from "@/components/FieldGroup";
-import { TextInput, TextArea, Select, PillSelect } from "@/components/Inputs";
+import { TextInput, TextArea, PillSelect } from "@/components/Inputs";
 import { PrimaryButton, SecondaryButton } from "@/components/Buttons";
 import { ContactPicker } from "@/components/ContactPicker";
 import { useProgramsLookup } from "@/lib/lookups";
 import { useContacts } from "./hooks";
 import { useUpsertProgramAffiliation } from "./hooks";
 import { formatError } from "@/lib/errors";
+import { ProgramCombobox, type ProgramOption } from "@/features/profile/ProgramCombobox";
 
 type AffiliationType = "student_alumni" | "coach" | "advisor";
 
@@ -29,6 +30,12 @@ const thisYear = new Date().getFullYear();
  *
  * Exactly one of the two should be passed. The other side becomes the
  * "pickable" field in the form.
+ *
+ * Program picker: when the program is the pickable side, uses the shared
+ * ProgramCombobox (debounced search) instead of a plain <select> over all
+ * ~483 programs. The combobox needs the program NAME to display a current
+ * selection; we resolve program_id -> name from useProgramsLookup (already
+ * loaded for this form).
  */
 export function ProgramAffiliationForm({
   open,
@@ -74,6 +81,17 @@ export function ProgramAffiliationForm({
     setForm((f) => ({ ...f, [key]: val }));
     setTouched(true);
   };
+
+  // Resolve the selected program's name for the combobox's closed-state
+  // display. ProgramCombobox shows `selectedLabel` when closed; without it a
+  // selection renders blank. The program lookup is already loaded for this
+  // form, so we read the name from there. null when nothing is selected (or
+  // the lookup hasn't resolved yet — the combobox tolerates a null label).
+  const selectedProgramName = useMemo(() => {
+    if (!form.program_id) return null;
+    const match = (programs ?? []).find((p) => p.id === form.program_id);
+    return match?.name ?? null;
+  }, [form.program_id, programs]);
 
   const validate = () => {
     const e: Record<string, string> = {};
@@ -131,15 +149,11 @@ export function ProgramAffiliationForm({
       {/* Show the field for the side that's NOT locked */}
       {lockedSide === "contact" ? (
         <FieldGroup label="Program" required error={errors.program_id}>
-          <Select
+          <ProgramCombobox
             value={form.program_id}
-            onChange={(v) => set("program_id", v)}
-            placeholder="Pick a program…"
-            options={(programs ?? []).map((p) => ({
-              id: p.id,
-              label: p.name,
-            }))}
-            error={errors.program_id}
+            selectedLabel={selectedProgramName}
+            placeholder="Search for a program…"
+            onChange={(p: ProgramOption) => set("program_id", p.id)}
           />
         </FieldGroup>
       ) : (
