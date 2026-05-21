@@ -13,11 +13,31 @@ handoff docs.
 - 💭 DESIGN DISCUSSIONS — open product questions, no clear shape yet
 - ✅ SHIPPED — done, kept here for momentum / portfolio context
 
-Last updated: May 20, 2026 — Email magic-link send fully shipped & verified in prod (SendGrid live, branded HTML email)
+Last updated: May 21, 2026 — Invitation email flow shipped; email automation complete
 
 ---
 
 ## ✅ Recently shipped
+
+- **📧 Email automation: invitation emails — SHIPPED** (May 21,
+  2026) — `/admin/invitations` now actually emails invitations.
+  "Send invitation" and "Resend" create/refresh the invitation row
+  and then email it via the new `api/send-invitation-email.ts`
+  (Node runtime, admin-gated). The page orchestrates the two steps
+  so failure modes stay legible: if the row is created but the
+  email fails, the invitation still exists and the admin is told
+  to use "Copy link" (the invite link is also auto-copied as a
+  backup). On a successful send the server stamps
+  `invitations.sent_at` with the real send time — making that
+  column honest (it was previously set to row-creation time).
+  Branded HTML email with an "Accept Invitation" button.
+  - The branded email HTML is INLINED in the function. Two
+    attempts to share it via an imported module both failed in
+    prod with ERR_MODULE_NOT_FOUND — see the ⚠️ item under
+    🟡 MEDIUM. This Vercel setup does not bundle cross-file imports
+    into Node-runtime functions; each must be self-contained.
+  - With this, email automation is COMPLETE — both profile
+    magic-link emails and invitation emails are shipped.
 
 - **📧 Email automation: profile magic-link send — FULLY SHIPPED**
   (May 17 backend/UI; SendGrid turned on + branded HTML May 20) —
@@ -107,19 +127,6 @@ Last updated: May 20, 2026 — Email magic-link send fully shipped & verified in
 ---
 
 ## 🔴 HIGH
-
-- **Email automation for invitations.** Currently copy/paste manual.
-  SEPARATE from the magic-link send shipped May 17 — that covered
-  *profile* magic links only. This is the *invitation* email flow
-  (`AcceptInvitationPage` / `FinishInvitationPage`): emailing a new
-  user their invitation link instead of hand-sending it. Now mostly
-  a known quantity — it's another SendGrid send, and
-  `api/send-magic-link.ts` is the working template to copy
-  (including the Node-runtime shape — see 🟢 LOW runtime note).
-  Still recommended to complete RLS Tier 2 before onboarding
-  additional users. Also intersects the active_invitations design
-  discussion: tightening invitation access may want its own
-  token-gated RPC.
 
 - **🔒 SECURITY / DESIGN: Permissioning model design — multi-tier
   internal users + external token-gated users.** Surfaced May 16 while
@@ -413,18 +420,31 @@ Last updated: May 20, 2026 — Email magic-link send fully shipped & verified in
 
 - **Email Draft Generator.** Potential 6th AI feature.
 
-- **Branded HTML email — extend to the invitation email + extract a
-  shared wrapper.** The magic-link email got its branded HTML
-  treatment May 20 (maroon header, white logo, button — see ✅
-  Recently shipped). But the HTML is currently inlined in
-  `api/send-magic-link.ts`. When the invitation email gets built,
-  it should use the same branded shell — at which point it's worth
-  extracting the HTML wrapper into a shared helper (e.g.
-  `api/_email-template.ts`) so the two functions don't duplicate
-  ~100 lines of table-based markup. Until the invitation email
-  exists there's only one caller, so the extraction can wait
-  (rule of three). The current design is deliberately barebones —
-  fancier layout is possible later but not needed.
+- **⚠️ Do NOT extract a shared email-template module for the api/
+  functions — it does not work on this Vercel setup.** The branded
+  HTML email is currently inlined in BOTH `api/send-magic-link.ts`
+  and `api/send-invitation-email.ts` — ~100 lines of table-based
+  markup, deliberately duplicated. This looks like obvious tech
+  debt to dedupe. It is not safe to dedupe. On May 21 we tried
+  twice:
+    1. Shared module at `api/_email-template.ts`, imported as a
+       sibling (`./_email-template`) — broke `send-magic-link` in
+       prod with ERR_MODULE_NOT_FOUND.
+    2. Shared module at `src/lib/email-template.ts`, imported as
+       `../src/lib/...` — verified with an isolated bundle test
+       (a throwaway `bundleTest()` helper imported into one
+       function): also ERR_MODULE_NOT_FOUND at runtime.
+  Conclusion: this Vercel project does not bundle ANY cross-file
+  import into Node-runtime functions. Each Node function (i.e. the
+  `@sendgrid/mail` ones) must be fully SELF-CONTAINED. Local
+  `npm run build` does NOT catch this — it only fails at runtime
+  on Vercel. If you want to dedupe the email HTML, the ONLY safe
+  path is to first prove cross-file bundling works (re-run an
+  isolated bundle test on a throwaway import) — and as of May 21
+  it does not. Until Vercel's behavior changes, leave the HTML
+  inlined in both files. If a THIRD email function ever appears,
+  that still doesn't change the constraint — it would just be a
+  third inlined copy.
 
 - **Profile V1 polish (Chunk 6 leftovers).** Deferred from the May
   16 build session because polish is most valuable closer to launch
