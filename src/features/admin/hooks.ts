@@ -181,8 +181,9 @@ export function useResendInvitation() {
   return useMutation({
     mutationFn: async (id: string) => {
       // Resend = new token + extended expiry, in place. Also un-revoke if
-      // the user is choosing to bring the invite back.
-      const { error } = await supabase
+      // the user is choosing to bring the invite back. Returns the updated
+      // row so the page can email it as the next step.
+      const { data, error } = await supabase
         .from("invitations")
         .update({
           token: generateToken(),
@@ -190,12 +191,70 @@ export function useResendInvitation() {
           expires_at: expiryDate(),
           revoked_at: null,
         })
-        .eq("id", id);
+        .eq("id", id)
+        .select()
+        .single();
       if (error) throw error;
+      return data;
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["invitations"] });
       qc.invalidateQueries({ queryKey: ["invitable-contacts"] });
+    },
+  });
+}
+
+// ---------------------------------------------------------------------------
+// useSendInvitationEmail: email an existing invitation via the serverless
+// function (api/send-invitation-email.ts).
+//
+// This is a SEPARATE step from creating/refreshing the invitation row —
+// InvitationsPage orchestrates: create-or-refresh row first, then call this.
+// Keeping it separate makes the failure modes legible: "the invitation
+// exists" and "the email went out" stay as two answerable questions.
+// On success the server stamps invitations.sent_at with the real send time.
+//
+// Mirrors the JWT-from-frontend pattern used by the AI features:
+// supabase.auth.getSession() -> session.access_token -> Bearer header.
+// ---------------------------------------------------------------------------
+export function useSendInvitationEmail() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (invitationId: string): Promise<{ sent_to: string }> => {
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
+      if (!session) {
+        throw new Error("Not signed in. Please refresh the page.");
+      }
+
+      const res = await fetch(`/api/send-invitation-email?t=${Date.now()}`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${session.access_token}`,
+        },
+        body: JSON.stringify({ invitation_id: invitationId }),
+      });
+
+      if (!res.ok) {
+        let msg = `Request failed (${res.status})`;
+        try {
+          const errJson = await res.json();
+          if (errJson?.error) msg = errJson.error;
+        } catch {
+          // Response wasn't JSON; keep the generic message.
+        }
+        throw new Error(msg);
+      }
+
+      const bodyJson = (await res.json()) as { sent_to?: string };
+      return { sent_to: bodyJson.sent_to ?? "" };
+    },
+    onSuccess: () => {
+      // sent_at changed server-side — refresh the list so the "Sent" column
+      // reflects the real send time.
+      qc.invalidateQueries({ queryKey: ["invitations"] });
     },
   });
 }
