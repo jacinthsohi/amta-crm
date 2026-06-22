@@ -13,7 +13,37 @@ handoff docs.
 - 💭 DESIGN DISCUSSIONS — open product questions, no clear shape yet
 - ✅ SHIPPED — done, kept here for momentum / portfolio context
 
-Last updated: May 21, 2026 — Invitation email, permissioning design + Phase 0, and program picker unification all shipped
+Last updated: June 22, 2026 — Permissioning Phase 1 built (awaiting apply + deploy); Phase 2 plan drafted; monitoring + tech-debt items captured
+
+---
+
+## 🚧 In progress / awaiting action
+
+- **🔒 Permissioning Phase 1 — accept-invitation → SECURITY DEFINER RPC.**
+  Built and committed (`49e2d67`, NOT pushed). The `accept_invitation(p_token)`
+  RPC links `auth_user_id` + stamps `accepted_at` atomically, validated by
+  token + email match, under definer privileges — so onboarding no longer
+  depends on the open `contacts` UPDATE policy (the Phase 2 prerequisite).
+  Also fixes a confirmed latent bug (2 of 6 live invitations were linked but
+  never `accepted_at`-stamped, because the old non-admin UPDATE silently hit
+  the admin-only `invitations` policy and matched 0 rows).
+  **Jacinth's action items, in order (deploy ordering is load-bearing):**
+  1. [ ] Run the probe (`migrations/20260622_..._PROBE.sql`) in the SQL
+     editor → expect "PROBE PASS — all 7 checks green" (self-rolls-back).
+  2. [ ] Apply the forward migration (`migrations/20260622_permissioning_phase1_accept_invitation.sql`).
+  3. [ ] Push `main` → Vercel deploy (ONLY after step 2, or onboarding 500s
+     on a missing RPC).
+  4. [ ] Smoke-test both accept paths (password + Google); confirm
+     `accepted_at` is set afterward.
+  Then: write up in HANDOFF, mark shipped.
+
+- **🔒 Permissioning Phase 2 — tighten `contacts` policies.** Decision-complete
+  plan committed at `docs/permissioning-phase2-plan.md` (`24484c5`). Grounded
+  in a live audit. Do NOT apply until Phase 1 is live + verified. Sequence:
+  Migration A (assign Diane/Maggy/Will → admin + role-column trigger guard) →
+  B1 (SELECT → internal+, `InternalGate` UI, migrate `useIsAdmin`/`AccessPage`
+  off `is_admin`) → B2 (writes → admin+). Each with pre-staged rollback,
+  tested on local PG16 first.
 
 ---
 
@@ -362,6 +392,17 @@ Last updated: May 21, 2026 — Invitation email, permissioning design + Phase 0,
 
 ## 🟡 MEDIUM
 
+- **🔒 SECURITY: `soft_delete` RPC has no role check.** Surfaced June 22
+  during the Phase 2 audit. `soft_delete(table_name, row_id)` is
+  SECURITY DEFINER and bypasses RLS, but its body does NOT verify the
+  caller's role — any authenticated user can soft-delete any row in any
+  of the tables it covers. Low real risk TODAY (all ~4 auth users are
+  trusted admins), but it becomes a real hole the moment Internal Users
+  exist. Add an `is_current_user_admin()` (or per-table) gate inside the
+  RPC. Cross-table, so slated to land with the Phase 3 table sweep — see
+  `docs/permissioning-phase2-plan.md` §8. Tightening table DELETE
+  policies does NOT fix this (the RPC bypasses them).
+
 - **🧾 Export "all" vs "current view" + Contacts pagination.**
 
 - **Add seasonal dimension to committee assignments + board membership.**
@@ -475,6 +516,20 @@ Last updated: May 21, 2026 — Invitation email, permissioning design + Phase 0,
 ---
 
 ## 🟢 LOW
+
+- **Phase 1 probe file lives in `migrations/`.** `20260622_..._PROBE.sql`
+  is a throwaway isolation test, not a migration, but it sits in the
+  migrations folder and embeds a *copy* of the `accept_invitation` body
+  (drift risk if the real function changes). Loudly marked "NOT A
+  MIGRATION." Consider a `migrations/probes/` or `scratch/` home for
+  probe scripts so they don't read as schema. ~10 min.
+
+- **Regenerate `database.types.ts` after Phase 1.** `accept_invitation`
+  (and the Profile V1 RPCs before it) aren't in the generated types — the
+  `supabase.rpc("accept_invitation", …)` call works at runtime and builds
+  green (vite build doesn't typecheck) but isn't type-checked. Folds into
+  the existing "Consolidate database types files" cleanup below; run
+  `npm run types:generate` once Phase 1 is applied.
 
 - **Consolidate database types files.** `database.generated.ts`
   (May 11) is stale — predates the secondary_email and current_city/
@@ -667,6 +722,45 @@ Last updated: May 21, 2026 — Invitation email, permissioning design + Phase 0,
   Interactions.** Lower priority — much goes to Notion.
 
 ---
+
+## 📡 Monitoring / observability (none exists today)
+
+The app has **no uptime, error, or health monitoring** — if prod breaks,
+we find out when a user reports it. With push-to-`main` = deploy and no
+staging, that's the biggest operational gap. Right-sized for ~10 internal
+users + external token holders, one developer. Prioritized:
+
+**Tier 1 — do first (mostly free, ~1–2 hrs total):**
+- **`/api/health` endpoint** (Edge function) that runs a trivial Supabase
+  query (e.g. `select 1` / a cheap count) and returns 200, or 503 if the
+  DB is unreachable. Makes uptime checks meaningful (catches DB/RLS
+  outages, not just "static site served"). Extra valuable RIGHT NOW
+  because Phase 2 tightens RLS — a health check that confirms a known
+  read still works is a safety net for that risky migration. Claude can
+  build this without prod access (it's an api/ function, not DDL).
+- **External uptime monitor** hitting `/api/health` every few minutes —
+  UptimeRobot (free) / Better Stack / Cronitor — alert to email/SMS.
+- **Error tracking** — Sentry (free tier) for the React app AND the
+  `api/*` functions. Today every runtime exception (failed RPC, the Ask
+  AI 504s in B6, a Vercel `ERR_MODULE_NOT_FOUND`) is invisible unless a
+  user reports it.
+- **Confirm Vercel notifications** are on for failed deploys + function
+  errors (push-to-main makes a bad deploy a prod incident).
+
+**Tier 2 — soon:**
+- **SendGrid deliverability alerts.** Onboarding depends on email (magic
+  links, invitations). A silently-bounced invite = a user who can't get
+  in. Watch bounces/blocks; consider the SendGrid Event Webhook.
+- **Supabase Reports + alerts.** Review the built-in DB/API/auth metrics;
+  enable any plan-available alerts (connection count — see the
+  navigator.locks history — disk, error rate).
+- **Synthetic checks** on the critical public paths (`/login`,
+  `/alumni-signup`, `/accept-invitation`) loading, not just the homepage.
+
+**Tier 3 — later / optional:**
+- Public status page (Better Stack / Instatus) — likely overkill for this
+  audience.
+- Supabase log drains / slow-query monitoring.
 
 ## 🧊 ICEBOX
 
