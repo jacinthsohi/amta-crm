@@ -1,328 +1,192 @@
-# AMTA CRM Session Handoff — Email automation complete (May 21, 2026)
+# AMTA CRM — Project Handoff
 
-## Where we are right now
+**As of:** May 21, 2026
+**Read this when:** `CLAUDE.md` points here for deeper context on a topic, or before starting work on permissioning, email, RLS, or any cross-cutting change.
 
-**Email automation is DONE.** Both email features are fully shipped
-and verified in prod:
-
-- **Profile magic-link emails** — an admin clicks "Email link
-  directly" on a contact; the CRM mints a token and emails a
-  branded link. (Shipped May 17–20.)
-- **Invitation emails** — `/admin/invitations` "Send invitation"
-  and "Resend" actually email the invitation now, instead of
-  copy/paste. (Shipped May 21.)
-
-Both send branded HTML email via SendGrid and are verified working
-end to end. There is no remaining email work.
-
-**Profile V1** (board-member self-service profile editing via magic
-link) remains fully shipped and unaffected.
-
-**Next session: open — see "What to pick up next" below.** There is
-no single teed-up task; the email arc is complete. The biggest
-outstanding item is the permissioning model design (🔴 HIGH).
+This file is the longer story: where the project is, what has been shipped, what was learned the hard way, and how to think about the next pieces. `CLAUDE.md` (at the repo root) is the short fast-start. `docs/BACKLOG.md` is the source of truth for what's planned. `docs/permissioning-model.md` is the agreed permissioning spec.
 
 ---
 
-## ⚠️ HARD-WON LESSON: Vercel does not bundle cross-file imports into Node-runtime functions
+## What the project is
 
-**Read this before touching anything in `api/`.** This cost most of
-a session on May 21.
+The AMTA CRM is a production system used by the American Mock Trial Association to manage contacts, board members, alumni, programs, events, and related operations. Jacinth Sohi (AMTA President) is the operator and the primary developer. The CRM is live at `crm.mocktrial.tech`. Real users depend on it. There is one Supabase project (`amta-crm-prod`); there is no separate dev environment.
 
-The branded email HTML is currently INLINED in both
-`api/send-magic-link.ts` and `api/send-invitation-email.ts` —
-~100 lines of table-based markup, duplicated. This looks like
-obvious tech debt. **Do not try to dedupe it by extracting a shared
-module.** We tried twice on May 21:
-
-1. Shared module at `api/_email-template.ts`, imported by the
-   functions as a sibling (`./_email-template`). Broke
-   `send-magic-link` in prod: **ERR_MODULE_NOT_FOUND**.
-2. Shared module at `src/lib/email-template.ts`, imported as
-   `../src/lib/...`. Verified in isolation first with a throwaway
-   `bundleTest()` helper imported into one function — **also
-   ERR_MODULE_NOT_FOUND** at runtime.
-
-**Conclusion:** this Vercel project does not bundle ANY cross-file
-import into Node-runtime functions (the `@sendgrid/mail` ones). Each
-Node function must be entirely SELF-CONTAINED. Critically:
-`npm run build` locally does NOT catch this — it builds green, then
-the function 500s at runtime on Vercel with ERR_MODULE_NOT_FOUND.
-
-**If you ever want to dedupe the email HTML:** the only safe path is
-to first re-prove cross-file bundling works, in isolation, with a
-throwaway import + a deploy + a Vercel log check. As of May 21 it
-does not work. Until Vercel's behavior changes, leave the HTML
-inlined in both files — a third email function would just be a
-third copy. This is recorded in BACKLOG.md under 🟡 MEDIUM as a
-⚠️ "do NOT extract" item.
-
-The deeper takeaway for next session: **this codebase has no
-working precedent for an `api/` function importing from anywhere
-else in the repo.** Treat every `api/` function as standalone.
+The architecture is a React 18 + TypeScript + Vite + Tailwind frontend, Supabase (Postgres + Auth + RLS + RPCs) backend, and Vercel for the frontend host + a small number of serverless `api/` functions. Pushing to `main` deploys to production.
 
 ---
 
-## What shipped this session (May 21) — invitation emails
+## Where things stand (May 21, 2026)
 
-### New: `api/send-invitation-email.ts`
-Node-runtime serverless function. Emails an existing invitation.
-- Does NOT create the invitation — the row already exists (created
-  client-side by `useSendInvitation`). This endpoint loads it by
-  `invitation_id` and emails the `/accept-invitation?token=` link.
-- Verifies caller JWT → verifies caller is an admin → loads the
-  invitation → sends branded HTML + plain-text email via SendGrid.
-- Guards: 404 if the invitation doesn't exist; 409 if already
-  accepted or revoked; 422 if the email/token is somehow blank.
-- On a successful send, stamps `invitations.sent_at = now()` —
-  making that column honest (it was previously set to row-creation
-  time; the table header literally says "Sent"). A failure of this
-  final UPDATE is logged but does NOT fail the request — the email
-  already went out.
-- Branded HTML is INLINED — see the ⚠️ lesson above.
+### Recently shipped
 
-### Updated: `src/features/admin/hooks.ts`
-- New `useSendInvitationEmail` — calls `/api/send-invitation-email`
-  with the caller's JWT (the `supabase.auth.getSession()` →
-  `Bearer` pattern).
-- `useResendInvitation` now returns the updated row (`.select()
-  .single()`), so the page can email it as the next step.
+- **Invitation email flow.** Admins on `/admin/invitations` can "Send invitation" and "Resend" — both create/refresh the invitation row and email it via `api/send-invitation-email.ts` (Node runtime, admin-gated). The page orchestrates row-then-email as two visible steps so failure modes stay legible. Branded HTML email with an "Accept Invitation" button. `invitations.sent_at` is stamped with the real send time on success.
+- **Profile magic-link email.** Admins email a profile magic link to a contact via `api/send-magic-link.ts`. Same branded shell. The branded HTML is inlined in both functions (see "Hard-won constraints" below — this is deliberate).
+- **Permissioning model — design.** The full model is specced in `docs/permissioning-model.md`. Four roles (Super Admin / Admin / Internal User / External), `internal_role` enum on `contacts`, nested role-check functions, five-phase migration. The doc is the agreed spec; future sessions implement against it.
+- **Permissioning Phase 0.** Purely additive, zero behavior change. Enum + column added, `active_contacts` view refreshed, role-check functions added, `is_current_user_admin()` redefined to nested form, single admin backfilled to `super_admin`. Forward + rollback both tested against Postgres 16 before applying.
+- **Program picker unification.** Shared `ProgramCombobox` (debounced search via `search_programs_public` RPC) now used in `/alumni-signup` and the admin `ProgramAffiliationForm` modal — replaced the old plain `<select>` over all ~483 programs.
 
-### Updated: `src/features/admin/InvitationsPage.tsx`
-- `handleSend` and `handleResend` orchestrate TWO steps: (1)
-  create/refresh the invitation row, then (2) call the email
-  endpoint. Kept separate (not folded into one mutation) so the
-  failure modes stay legible — "the row exists" and "the email
-  sent" are two answerable questions.
-- If the row is created but the email fails: an amber "warn"
-  banner (distinct from the red error banner) tells the admin the
-  invitation exists and to use "Copy link". The invite link is
-  also auto-copied to the clipboard as a belt-and-suspenders
-  backup, per the design decision.
-- Per-row "Resending…" state.
+### Where to pick up
 
-### Decisions made (so they're not re-litigated)
-- **Email wiring scope:** both "Send" and "Resend" actually email;
-  auto-copy-to-clipboard kept as a backup.
-- **`sent_at`:** made honest — stamped with the real send time on
-  success. (Insert still sets it to creation-time because the
-  column is NOT NULL; a successful send overwrites it.)
-- **Orchestration — Option A:** the page runs create-row then
-  email as two visible steps, for legible failure modes. The email
-  send is NOT folded into the mutation.
-- **Email copy:** subject "You're invited to the AMTA CRM", button
-  "Accept Invitation" (matches the `/accept-invitation` route and
-  the existing LoginPage "Accept it here" link).
-- **No-email guard:** server-side light validation only (422 on a
-  blank email). No client-side disabled-button UX — an invitation
-  row can't exist without an email (`NOT NULL`), so that UI would
-  be unreachable.
-- **Shared email template:** attempted, abandoned — see the ⚠️
-  lesson. Inlined in both functions instead.
+There is no single teed-up task. The natural next steps, in priority order:
+
+1. **Permissioning Phase 1** — convert `accept-invitation` to a SECURITY DEFINER RPC. Spec in `docs/permissioning-model.md` §6. This is the landmine: it **must** land before Phase 2 touches `contacts` policies. The current `AcceptInvitationPage` / `FinishInvitationPage` write `contacts.auth_user_id` directly and only succeed because the `contacts` UPDATE policy is `true`. Tighten that policy without this work first and new-user onboarding breaks silently.
+2. **Contacts filtering Phase 1** — well-scoped 🟡 MEDIUM. Simple field filters (standing, tags, has-email/phone, location) combining as AND. Genuinely ~one session IF the Contacts list loads client-side; verify that first. The combinatorial query builder is a separate Phase 2+ design discussion (see `docs/BACKLOG.md`).
+3. **Profile V1 Chunk 6 polish** — clean filler if a session ends early.
+4. Open: anything else in `docs/BACKLOG.md` that matches the session.
 
 ---
 
-## Earlier: the email automation foundation (May 17–20)
+## Hard-won constraints — these are not opinions
 
-### Backend
-- **Migration `20260517_create_profile_token_service.sql`** —
-  applied to prod. Private `_mint_profile_token()` helper (single
-  source of truth); `create_profile_token()` (admin-gated,
-  browser-facing) delegates to it; `create_profile_token_service()`
-  — same helper, NO `is_current_user_admin()` gate, because
-  service-role callers have no `auth.uid()`. Safety is the REVOKE:
-  never granted to anon/authenticated.
-- **`api/send-magic-link.ts`** — Node-runtime function. Verifies
-  caller JWT → verifies admin → mints a token via
-  `create_profile_token_service` → emails a branded link.
+Each was learned by breaking production and digging out. Do not re-test by re-attempting.
 
-### Frontend
-- **`src/features/contacts/ProfileLinkSection.tsx`** — sidebar with
-  "Generate link" (modal) + "Email link directly" (the endpoint).
+### Vercel does not bundle cross-file imports into Node-runtime `api/` functions
+
+Two `api/` functions use the Node runtime (because `@sendgrid/mail` needs Node built-ins): `api/send-magic-link.ts` and `api/send-invitation-email.ts`. Both must be **fully self-contained**. We tried twice to extract a shared branded-email helper:
+
+1. `api/_email-template.ts` (sibling import): `ERR_MODULE_NOT_FOUND` at runtime, production 500'd.
+2. `src/lib/email-template.ts` (cross-directory import): verified in isolation first with a throwaway `bundleTest()` helper imported into one function — also `ERR_MODULE_NOT_FOUND`.
+
+Conclusion: this Vercel project does not bundle any cross-file import into Node-runtime functions. Each Node function must be standalone. Critically, `npm run build` does NOT catch this — it builds green; the function 500s at runtime.
+
+The branded HTML is therefore inlined in both functions (~100 lines of table markup, deliberately duplicated). The duplication is correct, not debt. If you ever want to dedupe: prove cross-file bundling works in isolation first (a throwaway import + a real deploy), not by assumption. Recorded in `BACKLOG.md` under 🟡 MEDIUM as a ⚠️ "do NOT extract" item.
+
+There is a separate, parallel reality: the Edge `api/` functions (most of them) appear to handle imports differently. Whether cross-file imports work for Edge has not been tested. If you ever need a shared helper for Edge functions specifically, treat it as untested and verify.
+
+### `active_contacts` is an explicit-column view, with two consequences
+
+`active_contacts` is the soft-delete-filtering view (`WHERE deleted_at IS NULL`) used by RLS functions like `is_current_user_admin()`. It has an **explicit column list** — every column named one by one, not `SELECT *`.
+
+Two things this means:
+
+- Adding a column to `contacts` does NOT automatically expose it on the view. Queries that read `active_contacts.<new_column>` fail with "column does not exist." Any new column on `contacts` that RLS functions need must also be appended to `active_contacts` in the same migration.
+- `CREATE OR REPLACE VIEW` is **positional**. It can append columns at the end. It cannot:
+  - Insert a column mid-list (Postgres reads that as renaming the column at that position: `ERROR 42P16: cannot change name of view column ... use ALTER VIEW ... RENAME COLUMN`).
+  - Remove a column (`ERROR: cannot drop columns from view`). To shrink a view: `DROP VIEW` then `CREATE VIEW`.
+
+The Phase 0 migration's history is the proof: forward needed an APPEND of `internal_role` after `deleted_at` (not a tidy insert next to `is_admin`); rollback needed `DROP + CREATE` (not `CREATE OR REPLACE`).
+
+Phase 2/3 will touch this view again. Read `docs/permissioning-model.md` and this section before that work starts.
+
+### Verify environment-specific behavior by RUNNING, not by reading
+
+Both constraints above were caught only by running code. The migration above took four attempts because the first three relied on inspection. The Vercel bundling failure took two attempts for the same reason.
+
+The discipline that works:
+
+- **For migrations**: `apt install postgresql` and test forward + rollback against a local Postgres 16 instance before applying to prod. Seed it with a fixture that mirrors the prod schema for the relevant pieces. Run the full cycle (forward → rollback → forward again — the re-apply proves the rollback was fully atomic).
+- **For Vercel functions**: deploy a throwaway test in isolation if anything is novel (a `bundleTest()` import, an unfamiliar runtime feature) before wiring it into a real feature. The deploy log is the only source of truth.
+- **`npm run build`** is necessary but not sufficient. It catches TypeScript and bundle errors *for the frontend*. It does not catch Vercel Node-runtime import resolution failures, Postgres-specific behavior, or runtime errors of any kind.
+
+This is the lesson the project is paying for. Apply it.
+
+---
+
+## The permissioning model — current state
+
+Read `docs/permissioning-model.md` for the agreed spec. Quick reference:
+
+### The four roles
+
+- **Super Admin** — full access; the only role that can change other users' roles
+- **Admin** — most internal management; cannot change roles, cannot act on other Admins/Super Admins
+- **Internal User** — read most internal data; write own work
+- **External** — magic-link / invitation-token holders; no auth account; token-gated SECURITY DEFINER RPC pattern (Profile V1)
+
+### Schema
+
+- `contacts.internal_role` enum (`super_admin`, `admin`, `internal_user`). NULL means "not an internal user" — most contacts have this.
+- `contacts.is_admin` boolean — still present, will be retired after the migration completes (see `docs/permissioning-model.md` §5.3).
+
+### Role-check functions
+
+All three follow the same shape: `LANGUAGE sql STABLE SECURITY DEFINER SET search_path TO 'public'`, reading from the `active_contacts` view.
+
+- `is_current_user_super_admin()` — narrowest. True only for `super_admin`. Used where the Super/Admin distinction matters (role management).
+- `is_current_user_admin()` — nested. True for **both** `admin` and `super_admin`. This is the load-bearing redefinition: every existing RLS policy that calls this function keeps working unchanged because a Super Admin is correctly still "at least an admin."
+- `is_current_user_internal()` — broadest. True for any non-NULL role.
+
+### Migration phasing — the order is load-bearing
+
+- **Phase 0 (shipped)** — additive. Enum + column + functions + view refresh + backfill. No enforcement change.
+- **Phase 1 (next)** — convert `accept-invitation` to a SECURITY DEFINER RPC. **Must** ship before Phase 2.
+- **Phase 2** — tighten `contacts` policies onto the real role model. Only safe after Phase 1.
+- **Phase 3** — remaining tables + Internal User scoping.
+- **Phase 4** — self-service role-management UI (specced in detail in §7 of the design doc).
+
+### Why Phase 1 is the landmine
+
+The `accept-invitation` page writes `contacts.auth_user_id` directly. That succeeds today because the `contacts` UPDATE policy is `true`. The moment Phase 2 tightens that policy, this direct write breaks — and onboarding breaks **silently** (no error a new user would see until they can't get in). So Phase 1 builds the SECURITY DEFINER RPC for that linkage step, points the page at it, and verifies onboarding works end-to-end while the policy is still `true`. Only then does Phase 2 become safe.
+
+Pattern to follow for Phase 1: the Profile V1 RPCs (e.g. `create_profile_token`, `verify_profile_token`) are the template. REVOKE PUBLIC + GRANT EXECUTE to the right role; in-function auth gate (the user IS authenticated at this point — they just signed in via OAuth — they're not yet linked to a contact).
+
+---
+
+## Email automation — current shape
+
+Both email features (magic links + invitations) are fully shipped and verified in production.
+
+### Functions
+
+- `api/send-magic-link.ts` — Node runtime. Verifies caller JWT → verifies admin → mints a profile token via `create_profile_token_service` → emails branded link via SendGrid.
+- `api/send-invitation-email.ts` — Node runtime. Verifies caller JWT → verifies admin → loads invitation row by id (does NOT mint — the token is generated client-side in `useSendInvitation`) → emails branded link. Stamps `invitations.sent_at` on success.
+
+### Two token-minting RPCs (don't add a third)
+
+- `create_profile_token()` — admin-gated (`is_current_user_admin()`). Called from the browser.
+- `create_profile_token_service()` — NO auth gate, service-role only (REVOKE'd from anon/authenticated). Called by `api/send-magic-link.ts`, which does its own admin check first.
+- Both delegate to private `_mint_profile_token()`. Extend the helper; don't add a third minting path.
+
+Invitation tokens are different — they're generated client-side in `useSendInvitation` (`crypto.getRandomValues`) and stored on the invitations row. No RPC. The email endpoint just reads the existing token.
 
 ### SendGrid
-- Domain `collegemocktrial.org` authenticated (SPF/DKIM/DMARC).
-- API key with Custom Access scoped to **Mail Send only** (least
-  privilege). `SENDGRID_API_KEY` set in Vercel.
-- Click tracking is ON (account-wide). It rewrites links to a
-  tracking redirect — fine in the HTML emails because the link is
-  a labeled button, not visible URL text. Iceboxed for later
-  re-evaluation.
 
-### Branded HTML email
-- Both email functions send a plain-text body + a branded HTML
-  body: light gray wrapper, white card, maroon (#70172a) header
-  band with the white AMTA logo (hosted PNG, 160px wide), system
-  font stack, a maroon CTA button, raw-URL fallback, footer.
-- Table-based layout, inline styles — email clients don't support
-  modern CSS. See the long in-file header comment before editing.
+- Domain `collegemocktrial.org` authenticated. API key scoped to Mail Send only (least privilege).
+- From-address `amta@collegemocktrial.org`. There's a 🟢 LOW item to swap to `help@` once that mailbox is monitored.
+- Click tracking is ON (account-wide). It rewrites links to a tracking redirect. Fine in HTML emails (the button label hides the rewritten URL); iceboxed for re-evaluation.
+
+### Branded HTML
+
+Inlined in both functions. ~100 lines of `<table>`-based markup, inline styles, system font stack, white logo on a maroon (`#70172a`) header band, "Update My Profile" / "Accept Invitation" button. The HTML is duplicated by design — see the "Hard-won constraints" section above.
 
 ---
 
-## What to pick up next
+## Working with Jacinth — style and culture
 
-No single task is teed up — the email arc is done. Candidates, by
-priority:
-
-- **🔒 Permissioning model design (🔴 HIGH).** The big one. A
-  design/discussion session, not a build. Workshops the multi-tier
-  access model; it blocks the RLS Tier 2/3 audit and the
-  active_invitations work. Different *kind* of session — more
-  conversation, less code.
-- **Profile V1 Chunk 6 polish (🟡 MEDIUM)** — good filler if a
-  session ends early.
-- **Unify the program picker UX (🟡 MEDIUM)** — adopt the
-  ProgramCombobox on /alumni-signup and the admin affiliation form.
-- **Seasons concept design discussion (💭 Design Discussions)** —
-  possibly fast; unblocks board_terms, current-vs-past committees,
-  richer data viz.
-- **"Request login" button (🟡 MEDIUM)** — a board member enters
-  their email and gets a fresh magic link. Small now that the
-  mint-and-send code exists. Watch the security shape: must NOT
-  reveal whether an email matches a contact.
+- **Honest pushback is welcomed.** Vague optimism is not. When scope is wrong, when an assumption is shaky, when something is bigger than it looks — say so plainly. The strongest sessions are the ones where Claude pushed back early on a bad direction.
+- **Pause on design decisions before coding.** When a request contains a real fork (option A vs. option B with different tradeoffs), surface it. Don't pick silently.
+- **One commit per coherent feature.** Phased work gets phased commits. Commit messages should explain the *why* (especially for non-obvious decisions), not just the *what*.
+- **Migrations**: every forward has a `_rollback.sql` sibling staged. Both files commit together.
+- **Smoke testing in the app is on Jacinth, but flag what to check.** SQL verification and a green build are necessary, not sufficient. After deploying anything: tell her specifically which UI paths to exercise. Don't just say "test it."
+- **Documentation is part of shipping.** Backlog and design docs are kept current — stale entries mislead future sessions (this week we found two stale items). When a task ships, update the relevant doc in the same session if possible.
+- **It's fine to stop.** A clean stopping point with prod healthy beats one more change that didn't quite land.
 
 ---
 
-## Important context for next session
+## Document map
 
-### LESSON: Edge vs Node runtime on Vercel
+| File | Purpose |
+|---|---|
+| `CLAUDE.md` | Repo-root fast-start. Read every session. |
+| `HANDOFF.md` | This file. Read when `CLAUDE.md` points here or before cross-cutting work. |
+| `docs/BACKLOG.md` | Source of truth for what's done, in-progress, planned. Always check before starting. |
+| `docs/permissioning-model.md` | Agreed permissioning design (5 phases). |
+| `docs/bug-stories/` | Postmortems on production bugs. Worth a single read-through to internalize failure modes. |
+| `docs/specs/` | Earlier spec docs (Profile V1, etc.). |
+| `migrations/` | Forward migrations + `_rollback.sql` siblings. |
 
-`api/send-magic-link.ts` and `api/send-invitation-email.ts` are the
-only functions on the Vercel **Node** runtime. Every other api/*
-function is **Edge**. This is necessary, not tech debt:
+---
 
-- `@sendgrid/mail` depends on Node built-ins (`fs`, `path`) the
-  Edge runtime does not provide. A function using it MUST be
-  `runtime: "nodejs"`. Declaring it Edge → build failure.
-- Edge and Node handlers have **different signatures**:
-  - Edge: `handler(request: Request): Promise<Response>` — Web
-    standard. `request.headers.get(...)`, `await request.json()`,
-    `return new Response(...)`.
-  - Node: `handler(req: VercelRequest, res: VercelResponse)` —
-    Express style. `req.headers.authorization` (plain object),
-    `req.body` (pre-parsed), `res.status(n).json(...)`.
-- Switching a function's runtime means rewriting all its I/O
-  plumbing, not just the `config` line.
-- **For any new email function: copy `send-invitation-email.ts` or
-  `send-magic-link.ts` as the template** — both are the correct
-  Node shape AND correctly self-contained (no imports to fail to
-  bundle). Do not start from an Edge function.
-
-### Working style (Jacinth's preferences, well-established)
-
-- **Full file replacements** over surgical edits. Even small
-  changes → send the whole file. She'll `mv` from Downloads.
-  (Migration files are the exception — pasted into the Supabase
-  SQL editor; select-all before running or only the statement
-  under the cursor executes.)
-- **Pause for design questions before coding.** The
-  `ask_user_input_v0` tool is useful for surfacing options.
-- **Honest pushback on scope** — and on Claude's own mistakes. The
-  May 21 session is a case study: a confident-but-wrong assumption
-  about Vercel bundling cost real time. The recovery that worked:
-  restore the broken feature FIRST (never debug from a broken
-  baseline), then test the risky assumption in ISOLATION before
-  building on it. Apply that pattern. Don't ship an unverified
-  infrastructure assumption into a working feature.
-- **One commit per coherent feature.**
-- **Build locally before pushing** (`npm run build`) — but know
-  its limits: a local build does NOT catch Vercel runtime/deploy
-  errors. The Edge-module failure and BOTH ERR_MODULE_NOT_FOUND
-  failures built green locally and only failed on Vercel. Always
-  watch the Vercel deploy go green AND smoke-test the live
-  function.
-- **Functions that fail with specific, honest error strings** make
-  debugging fast — keep writing them that way.
-
-### Profile V1 / SECURITY DEFINER gotchas to carry forward
-
-- **`p_` prefix on function parameters.** PostgREST passes named
-  args literally; client calls must match.
-- **Postgres won't change a function's return type via CREATE OR
-  REPLACE** — DROP first.
-- **VERIFY SCHEMA before writing migrations.** Run
-  `grep -A 30 "create table public.<tablename>"` first.
-- **REVOKE PUBLIC + GRANT EXECUTE to anon/authenticated** for every
-  token-gated SECURITY DEFINER function. For service-role-only
-  functions, REVOKE from PUBLIC and grant NOTHING to
-  anon/authenticated — the REVOKE is the security.
-- **Transient network errors look like code bugs.** Retry once.
-
-### Two token-minting RPCs exist — don't confuse them
-
-- `create_profile_token(p_contact_id)` — admin-gated. Called from
-  the browser (the "Generate link" button).
-- `create_profile_token_service(p_contact_id)` — NO auth gate,
-  service-role only. Called by `api/send-magic-link.ts`, which
-  does its own admin check first.
-- Both delegate to private `_mint_profile_token(p_contact_id)`.
-  Don't add a third minting path — extend the helper.
-- Note: the INVITATION flow does NOT use these. Invitation tokens
-  are generated client-side (`crypto.getRandomValues` in
-  `useSendInvitation`) and stored on the `invitations` row. No RPC.
-
-### Email functions — quick map
-
-- `api/send-magic-link.ts` — profile magic-link email. Self-
-  contained, branded HTML inlined.
-- `api/send-invitation-email.ts` — invitation email. Self-
-  contained, branded HTML inlined (a deliberate copy — see the
-  ⚠️ lesson).
-- Both: Node runtime, admin-gated, reuse `SENDGRID_API_KEY` +
-  `PROFILE_LINK_BASE_URL`. Contact first name is HTML-escaped;
-  system-generated URLs are not.
-- If the branded look needs to change, change it in BOTH files.
-
-### Stack reminders
-
-- React 18 + TypeScript + Vite + Tailwind
-- Supabase (project `amta-crm-prod`, `ifnadlzcdtydbkqnyeif.supabase.co`)
-- Vercel auto-deploys on push to main
-- Repo: github.com/jacinthsohi/amta-crm
-- Live at crm.mocktrial.tech
-- Brand color: maroon #70172a
-- Email from-address: amta@collegemocktrial.org (also the locked
-  primary email in Profile V1; `help@` swap is a 🟢 LOW item)
-- White logo PNG (for email, on maroon):
-  `https://collegemocktrial.org/wp-content/uploads/2025/11/cropped-Main-Logo-White.png`
-
-### Vercel env vars
-
-All set:
-- `PROFILE_LINK_BASE_URL` = `https://crm.mocktrial.tech` ✅
-- `SENDGRID_API_KEY` ✅ (Mail-Send-scoped key)
-- `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY`,
-  `SUPABASE_SERVICE_ROLE_KEY`, `ANTHROPIC_API_KEY` ✅ (pre-existing)
-
-No new env vars and no migration were needed for the invitation
-email — it reuses everything and touches no schema.
-
-### Test resources
+## Test resources
 
 - Jacinth's contact_id: `96ea6367-9256-4545-be99-3a7c2ce34ec2`
-- Magic-link email: click "Email link directly" on a contact.
-- Invitation email: `/admin/invitations` → pick a contact → "Send
-  invitation"; or "Resend" on an existing row.
-- Profile page URL: `https://crm.mocktrial.tech/profile?token=<t>`
-- Invite URL: `https://crm.mocktrial.tech/accept-invitation?token=<t>`
-
-### Things to watch for next session
-
-1. **Never extract a shared module for `api/` functions** without
-   re-proving Vercel bundling in isolation first — see the ⚠️
-   lesson. As of May 21 it does not work; functions are self-
-   contained on purpose.
-2. **The permissioning model (🔴 HIGH)** is the biggest open item.
-   The api/* admin-check inconsistency is logged against it.
-3. **Profile V1 Chunk 6 polish** (🟡 MEDIUM) is the obvious filler
-   if a session ends early.
+- Magic-link email: `/contacts/{id}` → "Email link directly"
+- Invitation email: `/admin/invitations` → pick a contact → "Send invitation"; or "Resend" on an existing row
+- Profile page: `https://crm.mocktrial.tech/profile?token=<t>`
+- Invite acceptance: `https://crm.mocktrial.tech/accept-invitation?token=<t>`
 
 ---
 
-## Status summary
+## A closing note from the previous session
 
-Email automation: ✅ COMPLETE — magic-link emails and invitation
-emails both shipped, branded, verified in prod. The backlog is the
-source of truth and is current as of May 21. No email work remains.
-Next session is open; the permissioning model is the largest
-outstanding item.
+May 21 shipped a lot — invitation email, permissioning design, Phase 0, program picker unification, two backlog cleanups. It also lost real time to two preventable failures (Vercel bundling, the four-attempt migration), both caused by verifying assumptions through reading instead of running. Those lessons are now written into this file and the constraint section above; the goal of this handoff is that the next session does not pay the same cost. If you find yourself confidently believing something about Vercel's bundling, Postgres view rules, or any other environment-specific behavior — verify by execution before depending on it. That's the discipline this project has earned.
