@@ -731,13 +731,14 @@ staging, that's the biggest operational gap. Right-sized for ~10 internal
 users + external token holders, one developer. Prioritized:
 
 **Tier 1 — do first (mostly free, ~1–2 hrs total):**
-- **`/api/health` endpoint** (Edge function) that runs a trivial Supabase
-  query (e.g. `select 1` / a cheap count) and returns 200, or 503 if the
-  DB is unreachable. Makes uptime checks meaningful (catches DB/RLS
-  outages, not just "static site served"). Extra valuable RIGHT NOW
-  because Phase 2 tightens RLS — a health check that confirms a known
-  read still works is a safety net for that risky migration. Claude can
-  build this without prod access (it's an api/ function, not DDL).
+- **`/api/health` endpoint — BUILT** (`api/health.ts`, Edge, public),
+  pending deploy. Does a real DB round-trip via the anon-granted
+  `search_programs_public` RPC (verified working against prod), bounded by
+  a 5s timeout; returns 200 `{status:"ok"}` or 503 `{status:"degraded"}`.
+  Catches DB/RLS outages, not just "static site served" — a safety net for
+  the Phase 2 RLS tightening. Deploys with the next push (after Phase 1's
+  migration is applied — same unpushed history). NEXT: point a monitor at
+  it (below).
 - **External uptime monitor** hitting `/api/health` every few minutes —
   UptimeRobot (free) / Better Stack / Cronitor — alert to email/SMS.
 - **Error tracking** — Sentry (free tier) for the React app AND the
