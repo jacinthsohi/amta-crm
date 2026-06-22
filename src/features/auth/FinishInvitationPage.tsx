@@ -10,18 +10,22 @@ import { supabase } from "@/lib/supabase";
  * Our job:
  *   1. Confirm a session exists (Supabase will have populated it from the
  *      OAuth response).
- *   2. Confirm the invitation id from the URL.
- *   3. Confirm the Google account's email matches the invitation's email
- *      (otherwise someone could try to reuse a stolen invitation link).
- *   4. Link the auth user to the contact and mark the invitation accepted.
- *   5. Redirect to the dashboard.
+ *   2. Optionally show a friendly message if the Google email doesn't match
+ *      the invited email (the URL carries `email` only for this UX hint).
+ *   3. Finalize via the `accept_invitation` RPC, passing the invitation
+ *      `token` from the URL. The RPC re-validates the token, enforces the
+ *      email match authoritatively, links auth_user_id, and stamps
+ *      accepted_at — atomically, under definer privileges (permissioning
+ *      Phase 1; see docs/permissioning-model.md §6). It is idempotent, so a
+ *      refresh after success just sends the user home.
+ *   4. Redirect to the dashboard.
  *
  * If anything fails we surface the error.
  */
 export default function FinishInvitationPage() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
-  const invitationId = searchParams.get("invitation");
+  const token = searchParams.get("token");
   const expectedEmail = searchParams.get("email");
 
   const [error, setError] = useState<string | null>(null);
@@ -30,7 +34,7 @@ export default function FinishInvitationPage() {
     let cancelled = false;
 
     async function finalize() {
-      if (!invitationId || !expectedEmail) {
+      if (!token) {
         setError("Missing invitation context. Please start over from the original email.");
         return;
       }
@@ -44,48 +48,24 @@ export default function FinishInvitationPage() {
         return;
       }
 
-      // Sanity check: the Google account's email matches the invited email
+      // Friendly pre-check: the Google account's email matches the invited
+      // email. This is convenience only — the RPC enforces it authoritatively.
       const userEmail = (session.user.email ?? "").toLowerCase();
-      if (userEmail !== expectedEmail.toLowerCase()) {
+      if (expectedEmail && userEmail !== expectedEmail.toLowerCase()) {
         setError(
           `You signed in as ${userEmail}, but the invitation was sent to ${expectedEmail}. Please sign in with the matching account.`,
         );
         return;
       }
 
-      // Look up the invitation
-      const { data: invitation, error: invErr } = await supabase
-        .from("active_invitations")
-        .select("*")
-        .eq("id", invitationId)
-        .maybeSingle();
-
-      if (invErr || !invitation) {
-        setError("We couldn't find the invitation. It may have been revoked.");
-        return;
-      }
-      if (invitation.accepted_at) {
-        // Idempotent — already accepted, just send them home
-        if (!cancelled) navigate("/", { replace: true });
-        return;
-      }
-
-      // Link contact and mark invitation accepted
-      const { error: linkErr } = await supabase
-        .from("contacts")
-        .update({ auth_user_id: session.user.id })
-        .eq("id", invitation.contact_id);
-      if (linkErr) {
-        setError(`Could not link contact: ${linkErr.message}`);
-        return;
-      }
-
-      const { error: acceptErr } = await supabase
-        .from("invitations")
-        .update({ accepted_at: new Date().toISOString() })
-        .eq("id", invitation.id);
-      if (acceptErr) {
-        setError(`Could not mark invitation accepted: ${acceptErr.message}`);
+      // Finalize through the SECURITY DEFINER RPC. Idempotent: re-running after
+      // a successful accept returns success ("already_accepted") rather than an
+      // error, so a page refresh just sends the user home.
+      const { error: rpcErr } = await supabase.rpc("accept_invitation", {
+        p_token: token,
+      });
+      if (rpcErr) {
+        setError(rpcErr.message);
         return;
       }
 
@@ -96,7 +76,7 @@ export default function FinishInvitationPage() {
     return () => {
       cancelled = true;
     };
-  }, [invitationId, expectedEmail, navigate]);
+  }, [token, expectedEmail, navigate]);
 
   return (
     <div className="min-h-screen flex items-center justify-center px-6 bg-zinc-50">

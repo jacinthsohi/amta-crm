@@ -14,12 +14,12 @@ import { formatError } from "@/lib/errors";
  *    expired. Pull the linked contact for display.
  * 3. Offer the user two ways to claim the account:
  *      a. Set a password (we sign them up with the invitation email + their
- *         chosen password; a Supabase trigger can later link auth_user_id,
- *         but we do it client-side here for simplicity).
- *      b. Continue with Google. After OAuth returns, we verify the Google
- *         email matches the invitation email, then link the contact.
+ *         chosen password).
+ *      b. Continue with Google (handed off to FinishInvitationPage after OAuth).
  *
- * 4. Mark the invitation as accepted and redirect to the dashboard.
+ * 4. Once signed in, finalize via the `accept_invitation` SECURITY DEFINER RPC,
+ *    which links auth_user_id to the contact and stamps accepted_at atomically
+ *    (permissioning Phase 1). Then redirect to the dashboard.
  *
  * Note: this page does NOT require the user to be logged in.
  */
@@ -66,6 +66,14 @@ export default function AcceptInvitationPage() {
         setInvitationState({
           status: "invalid",
           message: "This invitation has already been used. Please sign in instead.",
+        });
+        return;
+      }
+
+      if (invitation.revoked_at) {
+        setInvitationState({
+          status: "invalid",
+          message: "This invitation has been revoked. Ask an admin for a new one.",
         });
         return;
       }
@@ -129,25 +137,19 @@ export default function AcceptInvitationPage() {
 
   const { invitation, contact } = invitationState;
 
-  // Helper: after auth has completed, link the auth user to the contact and
-  // mark the invitation as accepted.
-  async function finalizeAcceptance(authUserId: string) {
-    const { error: linkErr } = await supabase
-      .from("contacts")
-      .update({ auth_user_id: authUserId })
-      .eq("id", contact.id);
+  // Helper: after auth has completed, finalize acceptance via the
+  // SECURITY DEFINER RPC. The RPC links the (now-authenticated) caller to the
+  // invitation's contact AND stamps accepted_at, atomically, under definer
+  // privileges — derived from auth.uid()/auth.jwt() server-side, not from any
+  // value we pass. This replaces the old direct contacts/invitations writes
+  // (permissioning Phase 1; see docs/permissioning-model.md §6).
+  async function finalizeAcceptance() {
+    const { error: rpcErr } = await supabase.rpc("accept_invitation", {
+      p_token: invitation.token,
+    });
 
-    if (linkErr) {
-      throw new Error(`Could not link contact: ${linkErr.message}`);
-    }
-
-    const { error: acceptErr } = await supabase
-      .from("invitations")
-      .update({ accepted_at: new Date().toISOString() })
-      .eq("id", invitation.id);
-
-    if (acceptErr) {
-      throw new Error(`Could not mark invitation accepted: ${acceptErr.message}`);
+    if (rpcErr) {
+      throw new Error(rpcErr.message);
     }
   }
 
@@ -189,7 +191,7 @@ export default function AcceptInvitationPage() {
         return;
       }
 
-      await finalizeAcceptance(data.user.id);
+      await finalizeAcceptance();
       navigate("/", { replace: true });
     } catch (e) {
       setError(formatError(e));
@@ -200,13 +202,14 @@ export default function AcceptInvitationPage() {
 
   const handleGoogleAccept = async () => {
     setError(null);
-    // After Google OAuth, we land on a page that has access to auth.uid() via
-    // the session. We append `?invitation=<id>` so the post-OAuth handler
-    // (in App.tsx) knows to finalize this invitation.
+    // After Google OAuth we return to FinishInvitationPage, which has a session
+    // (so auth.uid()/auth.jwt() are populated) and calls accept_invitation().
+    // We carry the invitation `token` so both flows finalize through the same
+    // RPC; `email` is passed only for a friendly client-side mismatch message.
     const { error: oauthErr } = await supabase.auth.signInWithOAuth({
       provider: "google",
       options: {
-        redirectTo: `${window.location.origin}/accept-invitation/finish?invitation=${invitation.id}&email=${encodeURIComponent(invitation.email)}`,
+        redirectTo: `${window.location.origin}/accept-invitation/finish?token=${encodeURIComponent(invitation.token)}&email=${encodeURIComponent(invitation.email)}`,
       },
     });
     if (oauthErr) setError(oauthErr.message);
