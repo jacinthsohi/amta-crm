@@ -636,6 +636,39 @@ Last updated: June 22, 2026 — Permissioning Phase 1 built (awaiting apply + de
   needed: log how long /api/ask actually takes, consider raising
   timeout or shortening the agentic loop.
 
+- **B7 (🔴 onboarding-breaking, fix built): Google-invite acceptance
+  loops for non-admin invitees.** Found June 22 (live, mid-demo). A new
+  non-admin invitee accepts via "Continue with Google", but neither the
+  `contacts.auth_user_id` link nor `invitations.accepted_at` persists —
+  the browser-side writes race the access gate in `src/lib/auth.tsx` (and
+  hit RLS as a fresh/half-authenticated user), so both silently no-op with
+  no error and the page still navigates to `/`. The access gate then finds
+  no linked contact (and its invitation fallback can't help — see below),
+  calls `signOut()`, and bounces them to the homepage → infinite loop.
+  **Masked from admins:** admins already have a linked contact and pass
+  the admin-only `invitations` policy, so it "works for me" when an admin
+  tests it — but every real invitee is a non-admin. Confirmed on
+  `mdippolito3@gmail.com`: auth user created, contact unlinked,
+  invite unstamped.
+  - **FIXED BY permissioning Phase 1** (built, awaiting ship — see the
+    In-progress section) — the `accept_invitation` SECURITY DEFINER RPC
+    does both writes server-side, reliably, before navigate.
+  - **Manual intervention (July 10):** linked `mdippolito3`'s contact
+    (`d6905e7e…`) to their Google auth user (`4ccd5fc7…`) and stamped
+    `accepted_at` directly via the Management API, to unblock a live demo.
+    One-off; Phase 1 removes the need for such fixes.
+
+- **B8: access gate invitation-fallback is dead code for non-admins.**
+  `checkAccessByInvitation` in `src/lib/auth.tsx` reads `invitations`
+  directly, but that table is admin-only SELECT — so for a non-admin the
+  read returns 0 rows and the fallback always says "not allowed." The
+  gate's condition (b) ("allowed if they have an accepted invitation")
+  therefore never fires for the exact users it's meant to protect; their
+  access hinges entirely on the contact link. Fix: make it a SECURITY
+  DEFINER check (e.g. an `email_has_accepted_invitation(p_email)` RPC) or
+  remove the dead branch. Related to B7; lower urgency once Phase 1 makes
+  the contact-link path reliable.
+
 ---
 
 ## 💭 Design discussions

@@ -9,7 +9,16 @@
 -- and throwaway test data, exercises the happy path plus every failure branch
 -- by impersonating callers via request.jwt.claims, asserts each outcome, then
 -- DELIBERATELY raises at the end so the entire transaction — function, test
--- contacts, test invitations, all of it — ROLLS BACK. NOTHING persists.
+-- users, test contacts, test invitations, all of it — ROLLS BACK. NOTHING
+-- persists.
+--
+-- Real-world constraints the test data must respect (each one was found by
+-- RUNNING this probe against prod on 2026-10-08 — the probe earned its keep):
+--   * contacts.auth_user_id is a FOREIGN KEY to auth.users AND is UNIQUE, so
+--     the probe mints two throwaway auth.users rows (only `id` is NOT NULL
+--     there; the table has no triggers) inside the rolled-back transaction.
+--   * contacts has a UNIQUE index on lower(email) (contacts_email_unique), so
+--     every test contact gets its own distinct address.
 --
 -- HOW TO READ THE RESULT: it ALWAYS ends by raising an exception. Look at the
 -- message:
@@ -17,16 +26,18 @@
 --     migration (20260622_permissioning_phase1_accept_invitation.sql).
 --   * "PROBE FAIL: <reason>"             → do NOT apply; tell Claude the reason.
 -- Either way the DB is untouched afterward (verify: the function does not
--- exist, no Probe* contacts exist).
+-- exist, no Probe* contacts, no probe.* auth users).
 --
--- Run the whole script in the Supabase SQL editor (select-all, run).
+-- The embedded function body MUST match the real migration. If you change one,
+-- change the other.
 -- =============================================================================
 
 DO $probe$
 DECLARE
-  v_uid_a   uuid := '00000000-0000-0000-0000-00000000000a';
-  v_uid_b   uuid := '00000000-0000-0000-0000-00000000000b';
-  v_email   text := 'probe.phase1@example.com';
+  v_uid_a   uuid := gen_random_uuid();
+  v_uid_b   uuid := gen_random_uuid();
+  v_e       text;              -- the invitation email for the current check
+  v_e_happy text := 'probe.happy.phase1@example.com';
   v_contact uuid;
   v_inv     uuid;
   v_res     jsonb;
@@ -34,6 +45,11 @@ DECLARE
   v_acc     timestamptz;
   v_checks  int := 0;
 BEGIN
+  -- Throwaway auth users so the FK on contacts.auth_user_id is satisfiable.
+  INSERT INTO auth.users (id, email) VALUES
+    (v_uid_a, 'probe.a.phase1@example.com'),
+    (v_uid_b, 'probe.b.phase1@example.com');
+
   -- Install the function under test (identical body to the real migration).
   CREATE OR REPLACE FUNCTION public.accept_invitation(p_token text)
     RETURNS jsonb
@@ -69,6 +85,9 @@ BEGIN
       END IF;
       RAISE EXCEPTION 'This invitation has already been used. Please sign in instead.' USING ERRCODE = 'P0001';
     END IF;
+    IF EXISTS (SELECT 1 FROM public.contacts WHERE auth_user_id = v_uid AND id <> v_invitation.contact_id) THEN
+      RAISE EXCEPTION 'Your account is already linked to a different contact. Contact an admin.' USING ERRCODE = 'P0001';
+    END IF;
     UPDATE public.contacts SET auth_user_id = v_uid
       WHERE id = v_invitation.contact_id AND deleted_at IS NULL
         AND (auth_user_id IS NULL OR auth_user_id = v_uid);
@@ -80,18 +99,16 @@ BEGIN
   END;
   $fn$;
 
-  -- -----------------------------------------------------------------------
-  -- Helper to (re)create a fresh test contact + invitation with a given token.
-  -- -----------------------------------------------------------------------
   -- CHECK 1 — HAPPY PATH ----------------------------------------------------
+  v_e := v_e_happy;
   INSERT INTO public.contacts (first_name, last_name, email)
-    VALUES ('Probe','HappyPath', v_email) RETURNING id INTO v_contact;
+    VALUES ('Probe','HappyPath', v_e) RETURNING id INTO v_contact;
   INSERT INTO public.invitations (contact_id, email, token, sent_at, expires_at)
-    VALUES (v_contact, v_email, 'probe-happy', now(), now() + interval '7 days')
+    VALUES (v_contact, v_e, 'probe-happy', now(), now() + interval '7 days')
     RETURNING id INTO v_inv;
 
   PERFORM set_config('request.jwt.claims',
-    json_build_object('sub', v_uid_a::text, 'email', v_email, 'role','authenticated')::text, true);
+    json_build_object('sub', v_uid_a::text, 'email', v_e, 'role','authenticated')::text, true);
 
   v_res := public.accept_invitation('probe-happy');
   SELECT auth_user_id INTO v_linked FROM public.contacts WHERE id = v_contact;
@@ -109,7 +126,7 @@ BEGIN
 
   -- CHECK 3 — already accepted by a DIFFERENT user -> rejected ---------------
   PERFORM set_config('request.jwt.claims',
-    json_build_object('sub', v_uid_b::text, 'email', v_email, 'role','authenticated')::text, true);
+    json_build_object('sub', v_uid_b::text, 'email', v_e_happy, 'role','authenticated')::text, true);
   BEGIN
     v_res := public.accept_invitation('probe-happy');
     RAISE EXCEPTION 'PROBE FAIL: different-user re-accept should have raised, got %', v_res;
@@ -119,12 +136,13 @@ BEGIN
   END;
 
   -- CHECK 4 — EMAIL MISMATCH -> rejected ------------------------------------
+  v_e := 'probe.mismatch.phase1@example.com';
   INSERT INTO public.contacts (first_name, last_name, email)
-    VALUES ('Probe','Mismatch', v_email) RETURNING id INTO v_contact;
+    VALUES ('Probe','Mismatch', v_e) RETURNING id INTO v_contact;
   INSERT INTO public.invitations (contact_id, email, token, sent_at, expires_at)
-    VALUES (v_contact, v_email, 'probe-mismatch', now(), now() + interval '7 days');
+    VALUES (v_contact, v_e, 'probe-mismatch', now(), now() + interval '7 days');
   PERFORM set_config('request.jwt.claims',
-    json_build_object('sub', v_uid_a::text, 'email','someone.else@example.com','role','authenticated')::text, true);
+    json_build_object('sub', v_uid_b::text, 'email','someone.else@example.com','role','authenticated')::text, true);
   BEGIN
     v_res := public.accept_invitation('probe-mismatch');
     RAISE EXCEPTION 'PROBE FAIL: email mismatch should have raised, got %', v_res;
@@ -134,12 +152,13 @@ BEGIN
   END;
 
   -- CHECK 5 — EXPIRED -> rejected -------------------------------------------
+  v_e := 'probe.expired.phase1@example.com';
   INSERT INTO public.contacts (first_name, last_name, email)
-    VALUES ('Probe','Expired', v_email) RETURNING id INTO v_contact;
+    VALUES ('Probe','Expired', v_e) RETURNING id INTO v_contact;
   INSERT INTO public.invitations (contact_id, email, token, sent_at, expires_at)
-    VALUES (v_contact, v_email, 'probe-expired', now(), now() - interval '1 day');
+    VALUES (v_contact, v_e, 'probe-expired', now(), now() - interval '1 day');
   PERFORM set_config('request.jwt.claims',
-    json_build_object('sub', v_uid_a::text, 'email', v_email, 'role','authenticated')::text, true);
+    json_build_object('sub', v_uid_b::text, 'email', v_e, 'role','authenticated')::text, true);
   BEGIN
     v_res := public.accept_invitation('probe-expired');
     RAISE EXCEPTION 'PROBE FAIL: expired should have raised, got %', v_res;
@@ -149,10 +168,13 @@ BEGIN
   END;
 
   -- CHECK 6 — REVOKED -> rejected -------------------------------------------
+  v_e := 'probe.revoked.phase1@example.com';
   INSERT INTO public.contacts (first_name, last_name, email)
-    VALUES ('Probe','Revoked', v_email) RETURNING id INTO v_contact;
+    VALUES ('Probe','Revoked', v_e) RETURNING id INTO v_contact;
   INSERT INTO public.invitations (contact_id, email, token, sent_at, expires_at, revoked_at)
-    VALUES (v_contact, v_email, 'probe-revoked', now(), now() + interval '7 days', now());
+    VALUES (v_contact, v_e, 'probe-revoked', now(), now() + interval '7 days', now());
+  PERFORM set_config('request.jwt.claims',
+    json_build_object('sub', v_uid_b::text, 'email', v_e, 'role','authenticated')::text, true);
   BEGIN
     v_res := public.accept_invitation('probe-revoked');
     RAISE EXCEPTION 'PROBE FAIL: revoked should have raised, got %', v_res;
@@ -162,10 +184,11 @@ BEGIN
   END;
 
   -- CHECK 7 — NOT AUTHENTICATED -> rejected ---------------------------------
+  v_e := 'probe.anon.phase1@example.com';
   INSERT INTO public.contacts (first_name, last_name, email)
-    VALUES ('Probe','Anon', v_email) RETURNING id INTO v_contact;
+    VALUES ('Probe','Anon', v_e) RETURNING id INTO v_contact;
   INSERT INTO public.invitations (contact_id, email, token, sent_at, expires_at)
-    VALUES (v_contact, v_email, 'probe-anon', now(), now() + interval '7 days');
+    VALUES (v_contact, v_e, 'probe-anon', now(), now() + interval '7 days');
   PERFORM set_config('request.jwt.claims', '{}', true);  -- no sub -> auth.uid() NULL
   BEGIN
     v_res := public.accept_invitation('probe-anon');
@@ -175,7 +198,29 @@ BEGIN
     v_checks := v_checks + 1;
   END;
 
-  -- All green. Raise to force rollback of EVERYTHING (function + test data).
+  -- CHECK 8 — caller ALREADY LINKED to a different contact -> rejected -------
+  -- uid_a is linked to the HappyPath contact (CHECK 1). Accepting a fresh
+  -- invitation for a DIFFERENT contact as uid_a must hit the UNIQUE guard with
+  -- the friendly message, not a raw 23505.
+  v_e := 'probe.elsewhere.phase1@example.com';
+  INSERT INTO public.contacts (first_name, last_name, email)
+    VALUES ('Probe','Elsewhere', v_e) RETURNING id INTO v_contact;
+  INSERT INTO public.invitations (contact_id, email, token, sent_at, expires_at)
+    VALUES (v_contact, v_e, 'probe-elsewhere', now(), now() + interval '7 days');
+  PERFORM set_config('request.jwt.claims',
+    json_build_object('sub', v_uid_a::text, 'email', v_e, 'role','authenticated')::text, true);
+  BEGIN
+    v_res := public.accept_invitation('probe-elsewhere');
+    RAISE EXCEPTION 'PROBE FAIL: already-linked-elsewhere should have raised, got %', v_res;
+  EXCEPTION WHEN OTHERS THEN
+    IF SQLERRM LIKE 'PROBE FAIL%' THEN RAISE; END IF;
+    IF SQLERRM NOT LIKE '%already linked to a different contact%' THEN
+      RAISE EXCEPTION 'PROBE FAIL: wrong error for already-linked-elsewhere: %', SQLERRM;
+    END IF;
+    v_checks := v_checks + 1;
+  END;
+
+  -- All green. Raise to force rollback of EVERYTHING (function, users, data).
   RAISE EXCEPTION 'PROBE PASS — all % checks green. (This error is intentional: it rolls back the test. Nothing was persisted.)', v_checks;
 END;
 $probe$;

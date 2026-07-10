@@ -129,6 +129,18 @@ BEGIN
       USING ERRCODE = 'P0001';
   END IF;
 
+  -- contacts.auth_user_id is UNIQUE (and an FK to auth.users — verified live
+  -- 2026-10-08). If this caller is already linked to a DIFFERENT contact, the
+  -- link below would fail with a raw 23505; refuse with a clear message first.
+  IF EXISTS (
+    SELECT 1 FROM public.contacts
+    WHERE auth_user_id = v_uid
+      AND id <> v_invitation.contact_id
+  ) THEN
+    RAISE EXCEPTION 'Your account is already linked to a different contact. Contact an admin.'
+      USING ERRCODE = 'P0001';
+  END IF;
+
   -- Link the auth user to the contact. Guard against linking a soft-deleted
   -- contact, and against stealing a contact already linked to a DIFFERENT user
   -- (allow re-linking to the same user for idempotency).
@@ -162,7 +174,14 @@ COMMENT ON FUNCTION public.accept_invitation(text) IS
   'See docs/permissioning-model.md §6.';
 
 -- Least privilege: only authenticated callers may execute it.
+-- NOTE (learned 2026-10-08 on apply): Supabase's default privileges grant
+-- EXECUTE on new functions to anon/authenticated/service_role as NAMED roles.
+-- REVOKE ... FROM PUBLIC does not remove a named-role grant, so anon must be
+-- revoked explicitly or it keeps execute (harmless here — the body rejects
+-- auth.uid() IS NULL — but it breaks least-privilege). Verify with
+-- has_function_privilege('anon', ...) after applying, don't assume.
 REVOKE ALL ON FUNCTION public.accept_invitation(text) FROM PUBLIC;
+REVOKE EXECUTE ON FUNCTION public.accept_invitation(text) FROM anon;
 GRANT EXECUTE ON FUNCTION public.accept_invitation(text) TO authenticated;
 
 COMMIT;
