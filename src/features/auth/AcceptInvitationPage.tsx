@@ -39,6 +39,12 @@ export default function AcceptInvitationPage() {
   const [confirmPassword, setConfirmPassword] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Password path: Supabase's mailer_autoconfirm is OFF, so signUp() creates
+  // the user but returns NO session until they click the confirmation email.
+  // We can't call the RPC without a session, so we hand off to the
+  // confirmation link (which lands on FinishInvitationPage with a session,
+  // exactly like the Google path) and show this state meanwhile.
+  const [confirmationSent, setConfirmationSent] = useState(false);
 
   // Validate the token on mount
   useEffect(() => {
@@ -153,6 +159,13 @@ export default function AcceptInvitationPage() {
     }
   }
 
+  // BOTH paths finalize on FinishInvitationPage, which has a session (so
+  // auth.uid()/auth.jwt() are populated) and calls accept_invitation(). We
+  // carry the invitation `token` so the two flows share one finalize call;
+  // `email` is passed only for a friendly client-side mismatch message (the
+  // RPC enforces the match authoritatively).
+  const finishUrl = `${window.location.origin}/accept-invitation/finish?token=${encodeURIComponent(invitation.token)}&email=${encodeURIComponent(invitation.email)}`;
+
   const handleSetPassword = async (e: FormEvent) => {
     e.preventDefault();
     setError(null);
@@ -171,6 +184,10 @@ export default function AcceptInvitationPage() {
       const { data, error: signUpErr } = await supabase.auth.signUp({
         email: invitation.email,
         password,
+        // Where the confirmation email's link lands. Supabase confirms the
+        // address, establishes a session, and redirects here — so
+        // FinishInvitationPage runs the RPC exactly as it does after Google.
+        options: { emailRedirectTo: finishUrl },
       });
 
       if (signUpErr) {
@@ -191,8 +208,27 @@ export default function AcceptInvitationPage() {
         return;
       }
 
-      await finalizeAcceptance();
-      navigate("/", { replace: true });
+      // Supabase's enumeration protection: for an ALREADY-registered email it
+      // returns a user with no identities and no error — and sends no email.
+      // Don't tell them to wait for one that isn't coming.
+      if (data.user.identities && data.user.identities.length === 0) {
+        setError(
+          "An account with this email already exists. Sign in with your password, or use Google below.",
+        );
+        return;
+      }
+
+      if (data.session) {
+        // Only when email confirmation is disabled: we already have a
+        // session, so finalize right here.
+        await finalizeAcceptance();
+        navigate("/", { replace: true });
+        return;
+      }
+
+      // Normal case (confirmation required): no session yet. The confirmation
+      // email is on its way; acceptance completes when they click it.
+      setConfirmationSent(true);
     } catch (e) {
       setError(formatError(e));
     } finally {
@@ -202,18 +238,34 @@ export default function AcceptInvitationPage() {
 
   const handleGoogleAccept = async () => {
     setError(null);
-    // After Google OAuth we return to FinishInvitationPage, which has a session
-    // (so auth.uid()/auth.jwt() are populated) and calls accept_invitation().
-    // We carry the invitation `token` so both flows finalize through the same
-    // RPC; `email` is passed only for a friendly client-side mismatch message.
     const { error: oauthErr } = await supabase.auth.signInWithOAuth({
       provider: "google",
-      options: {
-        redirectTo: `${window.location.origin}/accept-invitation/finish?token=${encodeURIComponent(invitation.token)}&email=${encodeURIComponent(invitation.email)}`,
-      },
+      options: { redirectTo: finishUrl },
     });
     if (oauthErr) setError(oauthErr.message);
   };
+
+  if (confirmationSent) {
+    return (
+      <CenteredCard>
+        <div className="text-center">
+          <div className="inline-flex items-center justify-center w-10 h-10 rounded-full bg-maroon-50 mb-3">
+            <CheckCircle2 size={18} className="text-maroon-700" />
+          </div>
+          <h2 className="text-base font-semibold text-zinc-900">Check your email</h2>
+          <p className="text-sm text-zinc-700 mt-2">
+            We sent a confirmation link to{" "}
+            <span className="font-medium">{invitation.email}</span>. Open it to
+            finish creating your account — you'll land back here signed in.
+          </p>
+          <p className="text-xs text-zinc-500 mt-3">
+            Didn't get it? Check your spam folder, or return to this invitation
+            link and use "Continue with Google" instead.
+          </p>
+        </div>
+      </CenteredCard>
+    );
+  }
 
   return (
     <CenteredCard>
