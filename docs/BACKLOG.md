@@ -13,41 +13,91 @@ handoff docs.
 - 💭 DESIGN DISCUSSIONS — open product questions, no clear shape yet
 - ✅ SHIPPED — done, kept here for momentum / portfolio context
 
-Last updated: June 22, 2026 — Permissioning Phase 1 built (awaiting apply + deploy); Phase 2 plan drafted; monitoring + tech-debt items captured
+Last updated: October 12, 2026 — Permissioning Phase 1 SHIPPED (Oct 8) + password-path fix; `/api/health` live; Supabase auth-email rate cap found; Phase 2 unblocked
 
 ---
 
 ## 🚧 In progress / awaiting action
 
-- **🔒 Permissioning Phase 1 — accept-invitation → SECURITY DEFINER RPC.**
-  Built and committed (`49e2d67`, NOT pushed). The `accept_invitation(p_token)`
-  RPC links `auth_user_id` + stamps `accepted_at` atomically, validated by
-  token + email match, under definer privileges — so onboarding no longer
-  depends on the open `contacts` UPDATE policy (the Phase 2 prerequisite).
-  Also fixes a confirmed latent bug (2 of 6 live invitations were linked but
-  never `accepted_at`-stamped, because the old non-admin UPDATE silently hit
-  the admin-only `invitations` policy and matched 0 rows).
-  **Jacinth's action items, in order (deploy ordering is load-bearing):**
-  1. [ ] Run the probe (`migrations/20260622_..._PROBE.sql`) in the SQL
-     editor → expect "PROBE PASS — all 7 checks green" (self-rolls-back).
-  2. [ ] Apply the forward migration (`migrations/20260622_permissioning_phase1_accept_invitation.sql`).
-  3. [ ] Push `main` → Vercel deploy (ONLY after step 2, or onboarding 500s
-     on a missing RPC).
-  4. [ ] Smoke-test both accept paths (password + Google); confirm
-     `accepted_at` is set afterward.
-  Then: write up in HANDOFF, mark shipped.
+- **Phase 1 smoke test — Jacinth.** Phase 1 is applied + deployed + probe-
+  verified (see ✅ below), but has NOT yet been exercised through the real UI.
+  Before the next batch of invitations: send yourself (or a test address) a
+  fresh invitation and accept it BOTH ways —
+  1. [ ] **Google:** "Continue with Google" → should land on the dashboard,
+     no loop. Then `select accepted_at from invitations where email = …`
+     → set.
+  2. [ ] **Set password:** should show "Check your email"; the confirmation
+     link lands on `/accept-invitation/finish` signed in → dashboard.
+     (Subject to the 2/hour cap below until SMTP is fixed.)
+  If either misbehaves, the rollback is `migrations/20260622_…_rollback.sql`
+  + revert the two frontend commits — revert the frontend FIRST.
 
-- **🔒 Permissioning Phase 2 — tighten `contacts` policies.** Decision-complete
-  plan committed at `docs/permissioning-phase2-plan.md` (`24484c5`). Grounded
-  in a live audit. Do NOT apply until Phase 1 is live + verified. Sequence:
-  Migration A (assign Diane/Maggy/Will → admin + role-column trigger guard) →
-  B1 (SELECT → internal+, `InternalGate` UI, migrate `useIsAdmin`/`AccessPage`
-  off `is_admin`) → B2 (writes → admin+). Each with pre-staged rollback,
-  tested on local PG16 first.
+- **🔴 Supabase auth emails are capped at 2/hour — point Supabase SMTP at
+  SendGrid.** Found Oct 8: Auth has no custom SMTP, so confirmation /
+  password-reset emails use Supabase's built-in mailer
+  (`rate_limit_email_sent = 2`). The accept page's "Set password" path depends
+  on that confirmation email, so a THIRD invitee choosing it in the same hour
+  silently never gets a link (Google is unaffected — no email). Fix (Jacinth —
+  needs the SendGrid key, which lives only in Vercel): Supabase Dashboard →
+  Authentication → SMTP Settings → enable custom SMTP: host
+  `smtp.sendgrid.net`, port `587`, user `apikey`, password = the SendGrid
+  API key, sender `amta@collegemocktrial.org` (already domain-authenticated).
+  Then raise the per-hour email rate limit (Auth → Rate Limits). ~10 min.
+  Until then: steer invitees to Google, or space password sign-ups out.
+
+- **🔒 Permissioning Phase 2 — tighten `contacts` policies. NOW UNBLOCKED.**
+  Decision-complete plan at `docs/permissioning-phase2-plan.md`. Start once
+  the Phase 1 smoke test above is green. Sequence: Migration A (assign
+  Diane/Maggy/Will → admin + role-column trigger guard) → B1 (SELECT →
+  internal+, `InternalGate` UI, migrate `useIsAdmin`/`AccessPage` off
+  `is_admin`) → B2 (writes → admin+). Each with pre-staged rollback, tested
+  on local PG16 first. Note from Phase 1: Supabase's default privileges grant
+  EXECUTE on new functions to `anon` as a NAMED role — every new SECURITY
+  DEFINER function needs an explicit `REVOKE … FROM anon` and a
+  `has_function_privilege('anon', …)` check after applying.
 
 ---
 
 ## ✅ Recently shipped
+
+- **🔒 Permissioning Phase 1 — accept-invitation → SECURITY DEFINER RPC —
+  SHIPPED** (Oct 8, 2026; built June 22). `accept_invitation(p_token)` is live
+  in prod and both accept pages call it. It links `contacts.auth_user_id` to
+  `auth.uid()` and stamps `invitations.accepted_at` atomically under definer
+  privileges, enforcing token validity, not-revoked, not-expired, and
+  `auth.jwt()` email == invitation email server-side. Onboarding no longer
+  depends on the open `contacts` UPDATE policy → **Phase 2 is unblocked.**
+  Resolves **B7** (the Google-invite loop) pending the UI smoke test.
+  - Applied via the Management API — the June WAF block on DDL is gone (it
+    allowed DDL on Oct 8; re-test with a throwaway `create/drop function`
+    before assuming either way).
+  - The isolation probe (8 checks, self-rolling-back) **earned its keep**: on
+    first real run it surfaced two constraints the test data violated —
+    `contacts.auth_user_id` is an FK to `auth.users` AND UNIQUE; `contacts`
+    has a UNIQUE index on `lower(email)`. Neither was an RPC bug; the probe
+    now mints throwaway `auth.users` rows and uses distinct emails. The
+    UNIQUE finding also added a friendly "already linked to a different
+    contact" guard to the RPC (else a raw 23505).
+  - Post-apply verification caught **`anon` still able to EXECUTE** — Supabase
+    default privileges grant to anon as a named role, which `REVOKE … FROM
+    PUBLIC` doesn't remove. Fixed with an explicit revoke (now in the
+    migration). Harmless either way (the body rejects `auth.uid() IS NULL`)
+    but it broke least-privilege.
+  - **Password-path fix (`6412dfd`, pushed Oct 12):** `mailer_autoconfirm` is
+    OFF, so `signUp()` returns no session and the page could never call the
+    RPC — the "Set password" form was silently broken before Phase 1 too.
+    Now `emailRedirectTo` sends the confirmation link to
+    `/accept-invitation/finish?token=…` (same page as Google), and the page
+    shows "Check your email." Both paths share one `finishUrl`.
+  - **Commit-history note:** `236e12c` carries the Phase 1 commit *message*
+    but actually contains the July B7/B8 backlog entry plus the Oct 8
+    migration/probe/grant fixes — an `--amend` landed on the wrong tip. The
+    real Phase 1 work is `49e2d67`. Every file on `main` is correct; it's
+    pushed, so the history was left as-is rather than force-pushing a
+    deployed branch.
+  - **`/api/health` is live** (deployed with the same push): returns
+    `{"status":"ok","checks":{"db":"ok"}}` — point an uptime monitor at it
+    (see 📡 Monitoring).
 
 - **Unify the program picker UX — SHIPPED** (May 21, 2026) — the
   shared `ProgramCombobox` (debounced search, keyboard nav,
@@ -636,23 +686,25 @@ Last updated: June 22, 2026 — Permissioning Phase 1 built (awaiting apply + de
   needed: log how long /api/ask actually takes, consider raising
   timeout or shortening the agentic loop.
 
-- **B7 (🔴 onboarding-breaking, fix built): Google-invite acceptance
-  loops for non-admin invitees.** Found June 22 (live, mid-demo). A new
-  non-admin invitee accepts via "Continue with Google", but neither the
-  `contacts.auth_user_id` link nor `invitations.accepted_at` persists —
-  the browser-side writes race the access gate in `src/lib/auth.tsx` (and
-  hit RLS as a fresh/half-authenticated user), so both silently no-op with
-  no error and the page still navigates to `/`. The access gate then finds
-  no linked contact (and its invitation fallback can't help — see below),
-  calls `signOut()`, and bounces them to the homepage → infinite loop.
-  **Masked from admins:** admins already have a linked contact and pass
-  the admin-only `invitations` policy, so it "works for me" when an admin
-  tests it — but every real invitee is a non-admin. Confirmed on
-  `mdippolito3@gmail.com`: auth user created, contact unlinked,
-  invite unstamped.
-  - **FIXED BY permissioning Phase 1** (built, awaiting ship — see the
-    In-progress section) — the `accept_invitation` SECURITY DEFINER RPC
-    does both writes server-side, reliably, before navigate.
+- **B7 (✅ FIXED — Phase 1 shipped Oct 8; UI smoke test pending): Google-
+  invite acceptance loops for non-admin invitees.** Found June 22 (live,
+  mid-demo). A new non-admin invitee accepts via "Continue with Google", but
+  neither the `contacts.auth_user_id` link nor `invitations.accepted_at`
+  persists — the browser-side writes race the access gate in
+  `src/lib/auth.tsx` (and hit RLS as a fresh/half-authenticated user), so
+  both silently no-op with no error and the page still navigates to `/`.
+  The access gate then finds no linked contact (and its invitation fallback
+  can't help — see B8), calls `signOut()`, and bounces them to the homepage
+  → infinite loop. **Masked from admins:** admins already have a linked
+  contact and pass the admin-only `invitations` policy, so it "works for
+  me" when an admin tests it — but every real invitee is a non-admin.
+  Confirmed on `mdippolito3@gmail.com`: auth user created, contact
+  unlinked, invite unstamped.
+  - **FIXED BY permissioning Phase 1 (shipped Oct 8, 2026)** — the
+    `accept_invitation` SECURITY DEFINER RPC does both writes server-side,
+    reliably, before navigate. The "Set password" variant of the same bug
+    (no session until email confirmation) was fixed Oct 12 (`6412dfd`).
+    Close this entry once Jacinth's UI smoke test passes.
   - **Manual intervention (July 10):** linked `mdippolito3`'s contact
     (`d6905e7e…`) to their Google auth user (`4ccd5fc7…`) and stamped
     `accepted_at` directly via the Management API, to unblock a live demo.
@@ -764,14 +816,14 @@ staging, that's the biggest operational gap. Right-sized for ~10 internal
 users + external token holders, one developer. Prioritized:
 
 **Tier 1 — do first (mostly free, ~1–2 hrs total):**
-- **`/api/health` endpoint — BUILT** (`api/health.ts`, Edge, public),
-  pending deploy. Does a real DB round-trip via the anon-granted
-  `search_programs_public` RPC (verified working against prod), bounded by
-  a 5s timeout; returns 200 `{status:"ok"}` or 503 `{status:"degraded"}`.
-  Catches DB/RLS outages, not just "static site served" — a safety net for
-  the Phase 2 RLS tightening. Deploys with the next push (after Phase 1's
-  migration is applied — same unpushed history). NEXT: point a monitor at
-  it (below).
+- **`/api/health` endpoint — LIVE** (`api/health.ts`, Edge, public; deployed
+  Oct 8). `https://crm.mocktrial.tech/api/health` does a real DB round-trip
+  via the anon-granted `search_programs_public` RPC, bounded by a 5s timeout;
+  returns 200 `{status:"ok"}` or 503 `{status:"degraded"}` (observed ~1s DB
+  latency). Catches DB/RLS outages, not just "static site served" — a safety
+  net for the Phase 2 RLS tightening. **NEXT (Jacinth, ~10 min): point an
+  uptime monitor at it** (below) — until then it's a health check nobody is
+  watching.
 - **External uptime monitor** hitting `/api/health` every few minutes —
   UptimeRobot (free) / Better Stack / Cronitor — alert to email/SMS.
 - **Error tracking** — Sentry (free tier) for the React app AND the

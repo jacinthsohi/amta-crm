@@ -1,6 +1,6 @@
 # AMTA CRM — Project Handoff
 
-**As of:** May 21, 2026
+**As of:** October 12, 2026 (Permissioning Phase 1 shipped Oct 8 — see "Where to pick up"; the "Where things stand" section below still describes May 21 and is accurate for everything it covers)
 **Read this when:** `CLAUDE.md` points here for deeper context on a topic, or before starting work on permissioning, email, RLS, or any cross-cutting change.
 
 This file is the longer story: where the project is, what has been shipped, what was learned the hard way, and how to think about the next pieces. `CLAUDE.md` (at the repo root) is the short fast-start. `docs/BACKLOG.md` is the source of truth for what's planned. `docs/permissioning-model.md` is the agreed permissioning spec.
@@ -27,12 +27,41 @@ The architecture is a React 18 + TypeScript + Vite + Tailwind frontend, Supabase
 
 ### Where to pick up
 
-There is no single teed-up task. The natural next steps, in priority order:
+**Update (Oct 12, 2026): Permissioning Phase 1 SHIPPED Oct 8.** The
+`accept_invitation` SECURITY DEFINER RPC is live and both accept pages use it;
+the landmine below is defused and Phase 2 is unblocked. Full narrative and
+lessons in `docs/BACKLOG.md` → ✅ Recently shipped. Three things carry forward
+from that ship, in priority order:
+
+1. **Phase 1 smoke test (Jacinth)** — not yet exercised through the real UI.
+   Accept a fresh invitation via Google AND via "Set password" before the next
+   batch of invites goes out. Checklist in `docs/BACKLOG.md` → 🚧.
+2. **🔴 Supabase auth emails are capped at 2/hour** — no custom SMTP. The
+   password path's confirmation email rides that cap. Point Supabase SMTP at
+   SendGrid (steps in the backlog; needs the SendGrid key from Vercel).
+3. **Permissioning Phase 2** — tighten `contacts` policies. Decision-complete
+   plan in `docs/permissioning-phase2-plan.md`; start once (1) is green.
+
+Still-good next steps after those: **Contacts filtering Phase 1** (well-scoped
+🟡 MEDIUM; verify the list loads client-side first) and **Profile V1 Chunk 6
+polish** as filler.
+
+New hard-won constraints from the Phase 1 ship (details in the backlog entry):
+`contacts.auth_user_id` is an FK to `auth.users` AND UNIQUE; `contacts` has a
+UNIQUE index on `lower(email)`; Supabase default privileges grant EXECUTE on
+new functions to `anon` as a NAMED role (explicit `REVOKE … FROM anon`
+required — `REVOKE FROM PUBLIC` doesn't cover it); `mailer_autoconfirm` is
+OFF, so email/password `signUp()` returns no session until the confirmation
+link is clicked.
+
+<details><summary>Original (pre-Oct 8) text, kept for history</summary>
 
 1. **Permissioning Phase 1** — convert `accept-invitation` to a SECURITY DEFINER RPC. Spec in `docs/permissioning-model.md` §6. This is the landmine: it **must** land before Phase 2 touches `contacts` policies. The current `AcceptInvitationPage` / `FinishInvitationPage` write `contacts.auth_user_id` directly and only succeed because the `contacts` UPDATE policy is `true`. Tighten that policy without this work first and new-user onboarding breaks silently.
 2. **Contacts filtering Phase 1** — well-scoped 🟡 MEDIUM. Simple field filters (standing, tags, has-email/phone, location) combining as AND. Genuinely ~one session IF the Contacts list loads client-side; verify that first. The combinatorial query builder is a separate Phase 2+ design discussion (see `docs/BACKLOG.md`).
 3. **Profile V1 Chunk 6 polish** — clean filler if a session ends early.
 4. Open: anything else in `docs/BACKLOG.md` that matches the session.
+
+</details>
 
 ---
 
